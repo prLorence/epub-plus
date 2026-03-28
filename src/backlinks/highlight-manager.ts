@@ -1,4 +1,4 @@
-import type { Rendition, Contents } from "epubjs";
+import type { Rendition } from "epubjs";
 import type { EpubBacklink, PaletteColor } from "../types";
 
 export interface HighlightCallbacks {
@@ -10,23 +10,53 @@ export interface HighlightCallbacks {
 }
 
 /**
- * Manages highlight rendering by directly injecting <mark> elements into the
- * EPUB iframe DOM via content hooks. Bypasses EPUB.js's unreliable annotations API.
+ * Manages highlight rendering using rendition.annotations.highlight()
+ * following the pattern from the epub.js highlights example.
+ *
+ * Key: highlights are styled via rendition.themes.default() using the
+ * '.epubjs-hl' class, and CFI ranges are passed directly as returned
+ * by the 'selected' event.
  */
 export class HighlightManager {
 	private backlinkMap = new Map<string, EpubBacklink[]>();
+	private appliedCfis = new Set<string>();
 	private hoveredCfi: string | null = null;
+	private stylesApplied = false;
 
 	constructor(
 		private getRendition: () => Rendition | null,
 		private palette: PaletteColor[],
 		private opacity: number,
 		private callbacks: HighlightCallbacks,
-	) {
-		this.registerContentHook();
+	) {}
+
+	/**
+	 * Apply highlight styles via rendition.themes.default().
+	 * Must be called after the rendition is created and before highlights are applied.
+	 */
+	applyHighlightStyles(): void {
+		const rendition = this.getRendition();
+		if (!rendition || this.stylesApplied) return;
+
+		rendition.themes.default({
+			".epubjs-hl": {
+				fill: "yellow",
+				"fill-opacity": String(this.opacity),
+				"mix-blend-mode": "multiply",
+			},
+			"::selection": {
+				background: "rgba(255,255,0, 0.3)",
+			},
+		});
+		this.stylesApplied = true;
 	}
 
 	applyBacklinks(backlinks: EpubBacklink[]): void {
+		const rendition = this.getRendition();
+		if (!rendition) return;
+
+		this.applyHighlightStyles();
+
 		// Group by CFI range
 		const grouped = new Map<string, EpubBacklink[]>();
 		for (const bl of backlinks) {
@@ -37,15 +67,62 @@ export class HighlightManager {
 				grouped.set(bl.cfiRange, [bl]);
 			}
 		}
-		this.backlinkMap = grouped;
 
-		// Re-render highlights in currently displayed content
-		this.renderHighlightsInCurrentViews();
+		// Remove stale highlights
+		for (const cfi of this.appliedCfis) {
+			if (!grouped.has(cfi)) {
+				try {
+					rendition.annotations.remove(cfi, "highlight");
+				} catch {
+					// ignore
+				}
+				this.appliedCfis.delete(cfi);
+			}
+		}
+
+		// Add new highlights
+		for (const [cfi, bls] of grouped) {
+			if (!this.appliedCfis.has(cfi)) {
+				try {
+					const color = bls[0]!.color;
+					const hex = this.colorNameToHex(color);
+
+					rendition.annotations.highlight(
+						cfi,
+						{ backlinks: bls },
+						(e: MouseEvent) => {
+							this.callbacks.onHighlightClick(bls, e);
+						},
+						"epubjs-hl",
+						{
+							fill: hex,
+							"fill-opacity": String(this.opacity),
+							"mix-blend-mode": "multiply",
+						},
+					);
+					this.appliedCfis.add(cfi);
+				} catch {
+					// CFI may not resolve — skip
+				}
+			}
+		}
+
+		this.backlinkMap = grouped;
 	}
 
 	clearAll(): void {
+		const rendition = this.getRendition();
+		if (!rendition) return;
+
+		for (const cfi of this.appliedCfis) {
+			try {
+				rendition.annotations.remove(cfi, "highlight");
+			} catch {
+				// ignore
+			}
+		}
+		this.appliedCfis.clear();
 		this.backlinkMap.clear();
-		this.removeAllHighlightElements();
 	}
 
 	setHoverHighlight(cfiRange: string | null): void {
@@ -59,8 +136,8 @@ export class HighlightManager {
 	}
 
 	reattachHoverListeners(): void {
-		// Called after EPUB.js renders new content
-		this.renderHighlightsInCurrentViews();
+		// Annotations API handles re-injection on page turns automatically
+		// No manual re-attach needed
 	}
 
 	updatePalette(palette: PaletteColor[]): void {
@@ -75,229 +152,15 @@ export class HighlightManager {
 		return this.backlinkMap.get(cfiRange) ?? [];
 	}
 
-	/**
-	 * Register a hook that runs whenever EPUB.js renders a new section.
-	 * This injects highlights into the freshly rendered DOM.
-	 */
-	private registerContentHook(): void {
-		const rendition = this.getRendition();
-		if (!rendition) return;
-
-		rendition.hooks.content.register(
-			(contents: Contents) => {
-				// Small delay to ensure DOM is fully laid out
-				setTimeout(() => {
-					this.injectHighlightsIntoContents(contents);
-				}, 50);
-			},
-		);
-	}
-
-	private renderHighlightsInCurrentViews(): void {
-		const rendition = this.getRendition();
-		if (!rendition) return;
-
-		try {
-			// getContents() returns the current Contents object(s)
-			const contents = rendition.getContents();
-			// contents can be a single object or array depending on EPUB.js version
-			const contentsList = Array.isArray(contents)
-				? contents
-				: [contents];
-			for (const c of contentsList) {
-				if (c) {
-					this.injectHighlightsIntoContents(
-						c as unknown as Contents,
-					);
-				}
-			}
-		} catch {
-			// Silently ignore
-		}
-	}
-
-	private injectHighlightsIntoContents(contents: Contents): void {
-		const doc = contents.document;
-		if (!doc) return;
-
-		// Remove previously injected highlights in this document
-		const existing = doc.querySelectorAll(".epub-plus-hl");
-		for (const el of Array.from(existing)) {
-			const parent = el.parentNode;
-			if (parent) {
-				// Unwrap: move children out, remove the mark element
-				while (el.firstChild) {
-					parent.insertBefore(el.firstChild, el);
-				}
-				parent.removeChild(el);
-			}
-		}
-
-		// Inject highlights for each backlink
-		for (const [cfiRange, bls] of this.backlinkMap) {
-			try {
-				const range = contents.range(cfiRange);
-				if (!range) continue;
-
-				const color = bls[0]!.color;
-				const hex = this.colorNameToHex(color);
-				this.highlightRange(doc, range, cfiRange, hex, bls);
-			} catch {
-				// CFI doesn't resolve in this section — expected, skip
-			}
-		}
-
-		// Inject styles if not already present
-		this.injectHighlightStyles(doc);
-	}
-
-	private highlightRange(
-		doc: Document,
-		range: Range,
-		cfiRange: string,
-		hex: string,
-		bls: EpubBacklink[],
-	): void {
-		// For ranges that span multiple elements, we need to walk the range
-		// and wrap each text node segment individually
-		const textNodes = this.getTextNodesInRange(range);
-
-		for (const { node, startOffset, endOffset } of textNodes) {
-			const mark = doc.createElement("mark");
-			mark.className = "epub-plus-hl";
-			mark.dataset["cfi"] = cfiRange;
-			mark.setAttribute(
-				"style",
-				`background-color: ${hex}; opacity: ${this.opacity}; ` +
-					"border-radius: 2px; cursor: pointer; " +
-					"mix-blend-mode: multiply; padding: 0 1px;",
-			);
-
-			// Extract the highlighted portion of the text node
-			const highlightRange = doc.createRange();
-			highlightRange.setStart(node, startOffset);
-			highlightRange.setEnd(node, endOffset);
-
-			try {
-				highlightRange.surroundContents(mark);
-			} catch {
-				// surroundContents fails if range crosses element boundaries
-				// Fall back: wrap the extracted content
-				const fragment = highlightRange.extractContents();
-				mark.appendChild(fragment);
-				highlightRange.insertNode(mark);
-			}
-
-			// Attach event listeners
-			mark.addEventListener("click", (e) => {
-				this.callbacks.onHighlightClick(bls, e);
-			});
-			mark.addEventListener("mouseenter", (e) => {
-				this.callbacks.onHighlightHover(bls, e);
-			});
-			mark.addEventListener("mouseleave", (e) => {
-				this.callbacks.onHighlightHover(null, e);
-			});
-		}
-	}
-
-	private getTextNodesInRange(
-		range: Range,
-	): { node: Text; startOffset: number; endOffset: number }[] {
-		const results: {
-			node: Text;
-			startOffset: number;
-			endOffset: number;
-		}[] = [];
-
-		if (
-			range.startContainer === range.endContainer &&
-			range.startContainer.nodeType === Node.TEXT_NODE
-		) {
-			// Simple case: range is within a single text node
-			results.push({
-				node: range.startContainer as Text,
-				startOffset: range.startOffset,
-				endOffset: range.endOffset,
-			});
-			return results;
-		}
-
-		// Walk through all text nodes in the range
-		const walker = document.createTreeWalker(
-			range.commonAncestorContainer,
-			NodeFilter.SHOW_TEXT,
-		);
-
-		let node = walker.nextNode();
-		let inRange = false;
-
-		while (node) {
-			if (node === range.startContainer) {
-				inRange = true;
-				results.push({
-					node: node as Text,
-					startOffset: range.startOffset,
-					endOffset: (node as Text).length,
-				});
-			} else if (node === range.endContainer) {
-				results.push({
-					node: node as Text,
-					startOffset: 0,
-					endOffset: range.endOffset,
-				});
-				break;
-			} else if (inRange) {
-				results.push({
-					node: node as Text,
-					startOffset: 0,
-					endOffset: (node as Text).length,
-				});
-			}
-			node = walker.nextNode();
-		}
-
-		return results;
-	}
-
 	private toggleHoverClass(cfi: string, active: boolean): void {
 		this.forEachDocument((doc) => {
-			const marks = doc.querySelectorAll(
-				`.epub-plus-hl[data-cfi="${CSS.escape(cfi)}"]`,
-			);
-			for (const el of Array.from(marks)) {
-				el.classList.toggle("epub-plus-hl-hover", active);
+			// EPUB.js highlight elements use the 'epubjs-hl' class
+			const els = doc.querySelectorAll(".epubjs-hl");
+			for (const el of Array.from(els)) {
+				// EPUB.js stores the CFI in a data attribute or the ref
+				el.classList.toggle("epubjs-hl-hover", active);
 			}
 		});
-	}
-
-	private removeAllHighlightElements(): void {
-		this.forEachDocument((doc) => {
-			const marks = doc.querySelectorAll(".epub-plus-hl");
-			for (const el of Array.from(marks)) {
-				const parent = el.parentNode;
-				if (parent) {
-					while (el.firstChild) {
-						parent.insertBefore(el.firstChild, el);
-					}
-					parent.removeChild(el);
-				}
-			}
-		});
-	}
-
-	private injectHighlightStyles(doc: Document): void {
-		if (doc.querySelector("#epub-plus-hl-styles")) return;
-
-		const style = doc.createElement("style");
-		style.id = "epub-plus-hl-styles";
-		style.textContent = `
-			.epub-plus-hl-hover {
-				outline: 2px solid rgba(100, 150, 255, 0.8);
-				outline-offset: 1px;
-			}
-		`;
-		doc.head.appendChild(style);
 	}
 
 	private forEachDocument(fn: (doc: Document) => void): void {
@@ -315,7 +178,7 @@ export class HighlightManager {
 				}
 			}
 		} catch {
-			// Silently ignore
+			// ignore
 		}
 	}
 

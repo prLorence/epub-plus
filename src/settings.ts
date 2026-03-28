@@ -45,7 +45,7 @@ export interface EpubPlusSettings {
 }
 
 const DEFAULT_TEMPLATE =
-	"> [!quote|{{color}}] {{chapter}}\n> {{selection}}\n> — {{link}}";
+	"> [!quote|{{color}}] {{chapter}}\n> {{linkedSelection}}";
 
 export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	readingMode: "paginated",

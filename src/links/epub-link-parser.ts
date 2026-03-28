@@ -81,15 +81,19 @@ export function parseCfiRange(rangeCfi: string): {
 
 /**
  * Build a compact EPUB.js range CFI from start and end CFIs.
+ *
+ * EPUB.js format: epubcfi(prefix,/startSuffix,/endSuffix)
+ * The prefix does NOT end with /, the suffixes start with /.
+ * Example: epubcfi(/6/14!/4/2,/1:0,/1:42)
  */
 export function buildCfiRange(start: string, end: string): string {
-	// Find common prefix
+	// Find common prefix length
 	let i = 0;
 	while (i < start.length && i < end.length && start[i] === end[i]) {
 		i++;
 	}
-	// Back up to last path separator to keep prefix clean
-	while (i > 0 && start[i - 1] !== "/") {
+	// Back up to the last / — keep the / with the suffixes, not the prefix
+	while (i > 0 && start[i] !== "/") {
 		i--;
 	}
 

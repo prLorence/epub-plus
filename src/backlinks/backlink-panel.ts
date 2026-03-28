@@ -1,6 +1,5 @@
 import type { App } from "obsidian";
 import type { EpubBacklink } from "../types";
-import { navigateToBacklink } from "./hover-popover";
 
 export interface BacklinkPanelCallbacks {
 	onEntryHover: (backlink: EpubBacklink | null) => void;
@@ -157,7 +156,6 @@ export class BacklinkPanel {
 		}
 
 		entry.addEventListener("click", () => {
-			navigateToBacklink(this.app, bl);
 			this.callbacks.onEntryClick(bl);
 		});
 

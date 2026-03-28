@@ -12,6 +12,7 @@ export class EpubRenderer {
 	private rendition: Rendition | null = null;
 	private locationsGenerated = false;
 	private resizeObserver: ResizeObserver | null = null;
+	private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(
 		private containerEl: HTMLElement,
@@ -22,6 +23,10 @@ export class EpubRenderer {
 	async open(data: ArrayBuffer): Promise<void> {
 		this.book = ePub();
 		await this.book.open(data, "binary");
+
+		// Wait for the container to have non-zero dimensions.
+		// On first open from file picker, the DOM may not be laid out yet.
+		await this.waitForContainerSize();
 
 		const { width, height } = this.getContainerSize();
 
@@ -51,19 +56,28 @@ export class EpubRenderer {
 		});
 
 		this.resizeObserver = new ResizeObserver(() => {
-			this.handleResize();
+			if (this.resizeTimer) clearTimeout(this.resizeTimer);
+			this.resizeTimer = setTimeout(() => {
+				this.resizeTimer = null;
+				this.handleResize();
+			}, 100);
 		});
 		this.resizeObserver.observe(this.containerEl);
 	}
 
 	async display(target?: string): Promise<void> {
 		if (!this.rendition) return;
-		// EPUB.js expects CFIs in epubcfi(...) format
+		// Wrap bare CFI paths (starting with /) in epubcfi() format.
+		// Leave hrefs (like "chapter1.xhtml") and existing epubcfi() strings as-is.
 		const displayTarget =
-			target && !target.startsWith("epubcfi(")
+			target && target.startsWith("/") && !target.startsWith("epubcfi(")
 				? `epubcfi(${target})`
 				: target;
 		await this.rendition.display(displayTarget);
+
+		// After first display, ensure dimensions are correct.
+		// The container may have been 0-sized when renderTo was called.
+		this.handleResize();
 
 		if (!this.locationsGenerated && this.book) {
 			void this.book.locations.generate(1024).then(() => {
@@ -84,8 +98,18 @@ export class EpubRenderer {
 		return this.book?.navigation?.toc ?? [];
 	}
 
+	async getTocAsync(): Promise<NavItem[]> {
+		if (!this.book) return [];
+		await this.book.loaded.navigation;
+		return this.book.navigation?.toc ?? [];
+	}
+
 	getRendition(): Rendition | null {
 		return this.rendition;
+	}
+
+	getBook(): Book | null {
+		return this.book;
 	}
 
 	getCurrentHref(): string | null {
@@ -154,6 +178,8 @@ export class EpubRenderer {
 	}
 
 	destroy(): void {
+		if (this.resizeTimer) clearTimeout(this.resizeTimer);
+		this.resizeTimer = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.rendition?.destroy();
@@ -162,6 +188,35 @@ export class EpubRenderer {
 		}
 		this.rendition = null;
 		this.book = null;
+	}
+
+	private waitForContainerSize(): Promise<void> {
+		return new Promise((resolve) => {
+			const rect = this.containerEl.getBoundingClientRect();
+			if (rect.width > 0 && rect.height > 0) {
+				resolve();
+				return;
+			}
+			// Container has no size yet — poll until it does
+			const observer = new ResizeObserver((entries) => {
+				for (const entry of entries) {
+					if (
+						entry.contentRect.width > 0 &&
+						entry.contentRect.height > 0
+					) {
+						observer.disconnect();
+						resolve();
+						return;
+					}
+				}
+			});
+			observer.observe(this.containerEl);
+			// Safety timeout — don't wait forever
+			setTimeout(() => {
+				observer.disconnect();
+				resolve();
+			}, 2000);
+		});
 	}
 
 	private getContainerSize(): { width: number; height: number } {

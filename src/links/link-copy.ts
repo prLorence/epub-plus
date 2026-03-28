@@ -53,15 +53,29 @@ function buildFormattedLink(ctx: LinkCopyContext): string {
 	};
 
 	const subpath = buildEpubSubpath(params);
-	const link = `[[${ctx.file.path}${subpath}]]`;
+	const title = ctx.bookTitle ?? ctx.file.basename;
+
+	// Display alias uses the selected text (truncated) for a clean look
+	const displayText = ctx.selectedText.length > 60
+		? ctx.selectedText.slice(0, 60) + "..."
+		: ctx.selectedText;
+
+	// Link with short display alias
+	const link = `[[${ctx.file.path}${subpath}|${displayText}]]`;
+	// Raw link without alias
+	const rawLink = `[[${ctx.file.path}${subpath}]]`;
+	// Full selection text as a clickable link
+	const linkedSelection = `[[${ctx.file.path}${subpath}|${ctx.selectedText}]]`;
 
 	return applyTemplate(ctx.template, {
 		fileName: ctx.file.basename,
-		title: ctx.bookTitle ?? ctx.file.basename,
+		title,
 		author: ctx.bookAuthor ?? "",
 		chapter: ctx.chapterTitle,
 		selection: ctx.selectedText,
+		linkedSelection,
 		link,
+		rawLink,
 		color: ctx.color,
 	});
 }

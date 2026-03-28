@@ -38,6 +38,7 @@ export class EpubView extends FileView {
 	private pendingCfi: string | null = null;
 	private containerEl_: HTMLElement | null = null;
 	private renditionEl: HTMLElement | null = null;
+	private loadingEl: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -109,9 +110,10 @@ export class EpubView extends FileView {
 		await this.renderer.open(data);
 
 		// TOC panel
+		const toc = await this.renderer.getTocAsync();
 		this.tocPanel = new TocPanel(
 			this.containerEl_!.querySelector(".epub-plus-toc-panel")!,
-			this.renderer.getToc(),
+			toc,
 			(href) => void this.renderer?.display(href),
 		);
 		if (this.plugin.settings.showTocOnOpen) {
@@ -135,6 +137,9 @@ export class EpubView extends FileView {
 		this.pendingCfi = null;
 		await this.renderer.display(startCfi ?? undefined);
 
+		// Book is ready — hide loading screen
+		this.hideLoading();
+
 		// Phase 2: Backlink highlighting
 		this.setupBacklinkHighlighting(file);
 	}
@@ -146,6 +151,10 @@ export class EpubView extends FileView {
 		this.renderer = null;
 		this.tocPanel = null;
 		this.toolbar = null;
+		if (this.loadingEl) {
+			this.loadingEl.remove();
+			this.loadingEl = null;
+		}
 		if (this.containerEl_) {
 			this.containerEl_.remove();
 			this.containerEl_ = null;
@@ -175,6 +184,16 @@ export class EpubView extends FileView {
 		contentEl.empty();
 		contentEl.addClass("epub-plus-root");
 
+		// Loading screen
+		this.loadingEl = contentEl.createDiv({ cls: "epub-plus-loading" });
+		this.loadingEl.createDiv({
+			cls: "epub-plus-loading-spinner",
+		});
+		this.loadingEl.createDiv({
+			cls: "epub-plus-loading-text",
+			text: "Loading book...",
+		});
+
 		this.containerEl_ = contentEl.createDiv({
 			cls: "epub-plus-container",
 		});
@@ -190,6 +209,13 @@ export class EpubView extends FileView {
 		readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
+	}
+
+	private hideLoading(): void {
+		if (this.loadingEl) {
+			this.loadingEl.remove();
+			this.loadingEl = null;
+		}
 	}
 
 	// ── Phase 2: Backlink Highlighting ──
@@ -221,7 +247,10 @@ export class EpubView extends FileView {
 			this.backlinkPanel = new BacklinkPanel(this.app, panelEl, {
 				onEntryHover: (bl) =>
 					this.hoverSync?.onPanelEntryHover(bl),
-				onEntryClick: (bl) => navigateToBacklink(this.app, bl),
+				onEntryClick: (bl) => {
+					// Navigate EPUB to the highlight position
+					void this.renderer?.display(bl.cfiStart);
+				},
 			});
 			if (settings.showBacklinkPanel) {
 				this.backlinkPanel.show();
@@ -351,12 +380,50 @@ export class EpubView extends FileView {
 
 		showColorPalettePopup(doc, rect, palette, {
 			onColorSelect: (color: PaletteColor) => {
+				this.createHighlightAnnotation(cfiRange, color, contents);
 				void this.copyWithColor(cfiRange, text, color.name);
 			},
 			onAddToNote: (color: PaletteColor) => {
+				this.createHighlightAnnotation(cfiRange, color, contents);
 				void this.addToActiveNote(cfiRange, text, color.name);
 			},
 		});
+	}
+
+	/**
+	 * Create a persistent highlight annotation in the EPUB viewer
+	 * and clear the text selection (following the epub.js reference pattern).
+	 */
+	private createHighlightAnnotation(
+		cfiRange: string,
+		color: PaletteColor,
+		contents: Contents,
+	): void {
+		const rendition = this.renderer?.getRendition();
+		if (!rendition) return;
+
+		try {
+			rendition.annotations.highlight(
+				cfiRange,
+				{},
+				() => {
+					// highlight clicked
+				},
+				"epubjs-hl",
+				{
+					fill: color.hex,
+					"fill-opacity": String(
+						this.plugin.settings.highlightOpacity,
+					),
+					"mix-blend-mode": "multiply",
+				},
+			);
+		} catch {
+			// ignore CFI resolution errors
+		}
+
+		// Clear the text selection
+		contents.window.getSelection()?.removeAllRanges();
 	}
 
 	private async copyWithColor(

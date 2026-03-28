@@ -59,8 +59,6 @@ export class HoverSyncBridge {
 
 		if (backlink) {
 			this.highlightManager.setHoverHighlight(backlink.cfiRange);
-			// Scroll EPUB to the highlight
-			void this.renderer.display(backlink.cfiStart);
 		} else {
 			this.highlightManager.setHoverHighlight(null);
 		}
