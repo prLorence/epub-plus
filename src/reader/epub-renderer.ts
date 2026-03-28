@@ -53,7 +53,12 @@ export class EpubRenderer {
 
 	async display(target?: string): Promise<void> {
 		if (!this.rendition) return;
-		await this.rendition.display(target);
+		// EPUB.js expects CFIs in epubcfi(...) format
+		const displayTarget =
+			target && !target.startsWith("epubcfi(")
+				? `epubcfi(${target})`
+				: target;
+		await this.rendition.display(displayTarget);
 
 		if (!this.locationsGenerated && this.book) {
 			void this.book.locations.generate(1024).then(() => {
