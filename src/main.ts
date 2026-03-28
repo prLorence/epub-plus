@@ -9,10 +9,13 @@ import {
 import type { EpubPlusSettings } from "./settings";
 import { EpubView } from "./reader/epub-view";
 import { ProgressStore } from "./progress/progress-store";
+import { EpubTextCache } from "./embeds/epub-text-cache";
+import { registerEpubEmbedProcessor } from "./embeds/epub-embed-processor";
 
 export default class EpubPlusPlugin extends Plugin {
 	settings: EpubPlusSettings = DEFAULT_SETTINGS;
 	progressStore: ProgressStore = null!;
+	textCache: EpubTextCache = null!;
 	private originalOpenLinkText:
 		| ((
 				linktext: string,
@@ -31,6 +34,9 @@ export default class EpubPlusPlugin extends Plugin {
 		this.progressStore = new ProgressStore(this.app.vault);
 		await this.progressStore.load();
 
+		this.textCache = new EpubTextCache(this.app.vault);
+		await this.textCache.load();
+
 		this.registerView(
 			EPUB_VIEW_TYPE,
 			(leaf) => new EpubView(leaf, this),
@@ -38,6 +44,7 @@ export default class EpubPlusPlugin extends Plugin {
 		this.registerExtensions(["epub"], EPUB_VIEW_TYPE);
 
 		this.patchOpenLinkText();
+		registerEpubEmbedProcessor(this);
 
 		this.addCommand({
 			id: "continue-reading",
@@ -51,6 +58,7 @@ export default class EpubPlusPlugin extends Plugin {
 	onunload(): void {
 		this.unpatchOpenLinkText();
 		void this.progressStore.save();
+		void this.textCache.save();
 	}
 
 	async saveSettings(): Promise<void> {
@@ -110,6 +118,13 @@ export default class EpubPlusPlugin extends Plugin {
 					}
 					return;
 				}
+
+				// No existing leaf — open in a new tab (split right)
+				const leaf = this.app.workspace.getLeaf("tab");
+				await leaf.openFile(resolved, {
+					eState: subpath ? { subpath } : undefined,
+				});
+				return;
 			}
 
 			return this.originalOpenLinkText!(

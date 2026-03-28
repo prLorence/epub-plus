@@ -14,6 +14,7 @@ export interface EpubPlusSettings {
 	fontSize: number;
 	fontFamily: string;
 	lineHeight: number;
+	marginSize: number;
 	theme: "auto" | "light" | "dark" | "sepia";
 	showTocOnOpen: boolean;
 	autoSaveProgress: boolean;
@@ -42,6 +43,9 @@ export interface EpubPlusSettings {
 	// Chapter filter
 	filterBacklinksByChapter: boolean;
 	showBacklinkPanel: boolean;
+
+	// Keyboard & navigation
+	enableVimBindings: boolean;
 }
 
 const DEFAULT_TEMPLATE =
@@ -49,9 +53,10 @@ const DEFAULT_TEMPLATE =
 
 export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	readingMode: "paginated",
-	fontSize: 16,
+	fontSize: 18,
 	fontFamily: "",
-	lineHeight: 1.5,
+	lineHeight: 1.6,
+	marginSize: 40,
 	theme: "auto",
 	showTocOnOpen: false,
 	autoSaveProgress: true,
@@ -71,7 +76,9 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	hoverSyncMode: "both",
 
 	filterBacklinksByChapter: false,
-	showBacklinkPanel: true,
+	showBacklinkPanel: false,
+
+	enableVimBindings: false,
 };
 
 /**
@@ -108,6 +115,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 		this.renderBacklinkSection(containerEl);
 		this.renderCopySection(containerEl);
 		this.renderHoverSection(containerEl);
+		this.renderKeyboardSection(containerEl);
 		this.renderProgressSection(containerEl);
 	}
 
@@ -168,6 +176,20 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					.setDynamicTooltip()
 					.onChange(async (v) => {
 						this.plugin.settings.lineHeight = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Margin")
+			.setDesc("Horizontal margin in pixels.")
+			.addSlider((s) =>
+				s
+					.setLimits(0, 100, 5)
+					.setValue(this.plugin.settings.marginSize)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						this.plugin.settings.marginSize = v;
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -432,6 +454,24 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					.onChange(async (v) => {
 						this.plugin.settings.hoverSyncMode =
 							v as EpubPlusSettings["hoverSyncMode"];
+						await this.plugin.saveSettings();
+					}),
+			);
+	}
+
+	private renderKeyboardSection(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName("Keyboard").setHeading();
+
+		new Setting(containerEl)
+			.setName("Vim keybindings")
+			.setDesc(
+				"Use vim-style keys for page navigation. Requires reopening the book.",
+			)
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.enableVimBindings)
+					.onChange(async (v) => {
+						this.plugin.settings.enableVimBindings = v;
 						await this.plugin.saveSettings();
 					}),
 			);

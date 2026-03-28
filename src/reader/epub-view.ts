@@ -6,6 +6,7 @@ import { EpubRenderer } from "./epub-renderer";
 import { TocPanel } from "./toc-panel";
 import { ReaderToolbar } from "./reader-toolbar";
 import { parseEpubSubpath } from "../links/epub-link-parser";
+import { VimBindings } from "./vim-bindings";
 import {
 	copyLinkToSelection,
 	appendLinkToActiveNote,
@@ -39,6 +40,12 @@ export class EpubView extends FileView {
 	private containerEl_: HTMLElement | null = null;
 	private renditionEl: HTMLElement | null = null;
 	private loadingEl: HTMLElement | null = null;
+	private vimBindings: VimBindings | null = null;
+	private pendingSelection: {
+		cfiRange: string;
+		text: string;
+		contents: Contents;
+	} | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -54,6 +61,39 @@ export class EpubView extends FileView {
 			void this.renderer?.prev();
 			return false;
 		});
+		this.scope.register([], " ", () => {
+			void this.renderer?.next();
+			return false;
+		});
+		this.scope.register(["Shift"], " ", () => {
+			void this.renderer?.prev();
+			return false;
+		});
+		this.scope.register([], "Escape", () => {
+			this.pendingSelection = null;
+			return false;
+		});
+
+		// Number keys 1-9 for quick color selection
+		for (let i = 0; i < 9; i++) {
+			this.scope.register([], String(i + 1), () => {
+				if (!this.pendingSelection) return true;
+				const color = this.plugin.settings.colorPalette[i];
+				if (!color) return true;
+				this.createHighlightAnnotation(
+					this.pendingSelection.cfiRange,
+					color,
+					this.pendingSelection.contents,
+				);
+				void this.copyWithColor(
+					this.pendingSelection.cfiRange,
+					this.pendingSelection.text,
+					color.name,
+				);
+				this.pendingSelection = null;
+				return false;
+			});
+		}
 	}
 
 	getViewType(): string {
@@ -146,11 +186,23 @@ export class EpubView extends FileView {
 		// Book is ready — hide loading screen
 		this.hideLoading();
 
-		// Force a re-render after a brief delay to fix blank page issues
-		// when the container's layout wasn't finalized during initial render
+		// Fix blank page: after the DOM is fully laid out, resize and
+		// re-display at the current location. This handles the case where
+		// the initial display() ran before the container had its final dimensions.
 		setTimeout(() => {
-			this.renderer?.forceResize();
-		}, 300);
+			if (!this.renderer) return;
+			this.renderer.forceResize();
+			// Use the current location from the rendition (set by the initial display)
+			// rather than a stale target, to preserve reading position
+			const currentCfi =
+				this.renderer.getRendition()?.location?.start?.cfi;
+			void this.renderer.display(currentCfi ?? startCfi ?? undefined);
+		}, 500);
+
+		// Vim keybindings
+		if (this.plugin.settings.enableVimBindings && this.renderer) {
+			this.vimBindings = new VimBindings(this.scope!, this.renderer);
+		}
 
 		// Phase 2: Backlink highlighting
 		this.setupBacklinkHighlighting(file);
@@ -373,6 +425,9 @@ export class EpubView extends FileView {
 		const selection = contents.window.getSelection();
 		const text = selection?.toString() ?? "";
 		if (!text || !this.file) return;
+
+		// Store for keyboard shortcut (1-7 keys)
+		this.pendingSelection = { cfiRange, text, contents };
 
 		this.showSelectionPopup(contents, cfiRange, text);
 	}

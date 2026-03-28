@@ -24,11 +24,15 @@ export class EpubRenderer {
 		this.book = ePub();
 		await this.book.open(data, "binary");
 
-		// Wait for the container to have non-zero dimensions.
-		// On first open from file picker, the DOM may not be laid out yet.
-		await this.waitForContainerSize();
+		// Wait for next animation frame to ensure container is laid out
+		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-		const { width, height } = this.getContainerSize();
+		// Use fixed fallback dimensions if container still has no size
+		let { width, height } = this.getContainerSize();
+		if (width === 0 || height === 0) {
+			width = 800;
+			height = 600;
+		}
 
 		this.rendition = this.book.renderTo(this.containerEl, {
 			width,
@@ -53,6 +57,21 @@ export class EpubRenderer {
 
 		this.rendition.on("rendered", () => {
 			this.callbacks.onRendered?.();
+		});
+
+		// Forward keyboard events from the EPUB iframe to the parent document
+		// so Obsidian's Scope system can capture them (iframe events don't bubble up)
+		this.rendition.on("keydown", (e: KeyboardEvent) => {
+			document.dispatchEvent(
+				new KeyboardEvent("keydown", {
+					key: e.key,
+					code: e.code,
+					ctrlKey: e.ctrlKey,
+					metaKey: e.metaKey,
+					shiftKey: e.shiftKey,
+					altKey: e.altKey,
+				}),
+			);
 		});
 
 		this.resizeObserver = new ResizeObserver(() => {
@@ -161,14 +180,41 @@ export class EpubRenderer {
 
 	applyFontSettings(): void {
 		if (!this.rendition) return;
+		const margin = `${this.settings.marginSize}px`;
 		const styles: Record<string, string> = {
 			"font-size": `${this.settings.fontSize}px !important`,
-			"line-height": `${this.settings.lineHeight}`,
+			"line-height": `${this.settings.lineHeight} !important`,
+			"padding-left": `${margin} !important`,
+			"padding-right": `${margin} !important`,
+			"max-width": "none !important",
 		};
 		if (this.settings.fontFamily) {
 			styles["font-family"] = `${this.settings.fontFamily} !important`;
 		}
-		this.rendition.themes.default({ body: styles });
+
+		this.rendition.themes.default({
+			body: styles,
+			p: {
+				"text-align": "justify",
+				"text-indent": "1.5em",
+				"margin-top": "0.5em",
+				"margin-bottom": "0.5em",
+			},
+			"h1, h2, h3, h4, h5, h6": {
+				"text-indent": "0",
+				"text-align": "left",
+				"margin-top": "1.5em",
+				"margin-bottom": "0.5em",
+			},
+			".epubjs-hl": {
+				fill: "yellow",
+				"fill-opacity": String(this.settings.highlightOpacity),
+				"mix-blend-mode": "multiply",
+			},
+			"::selection": {
+				background: "rgba(255,255,0, 0.3)",
+			},
+		});
 	}
 
 	updateSettings(settings: EpubPlusSettings): void {
@@ -188,35 +234,6 @@ export class EpubRenderer {
 		}
 		this.rendition = null;
 		this.book = null;
-	}
-
-	private waitForContainerSize(): Promise<void> {
-		return new Promise((resolve) => {
-			const rect = this.containerEl.getBoundingClientRect();
-			if (rect.width > 0 && rect.height > 0) {
-				resolve();
-				return;
-			}
-			// Container has no size yet — poll until it does
-			const observer = new ResizeObserver((entries) => {
-				for (const entry of entries) {
-					if (
-						entry.contentRect.width > 0 &&
-						entry.contentRect.height > 0
-					) {
-						observer.disconnect();
-						resolve();
-						return;
-					}
-				}
-			});
-			observer.observe(this.containerEl);
-			// Safety timeout — don't wait forever
-			setTimeout(() => {
-				observer.disconnect();
-				resolve();
-			}, 2000);
-		});
 	}
 
 	private getContainerSize(): { width: number; height: number } {
