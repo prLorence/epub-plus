@@ -24,13 +24,20 @@ export function scanBacklinksForEpub(
 		}
 	}
 
-	// Fallback: scan all markdown files for links to this epub
-	// (resolvedLinks may not include links to binary/custom file types)
-	if (sourceFiles.size === 0) {
+	// Fallback: scan markdown files that mention the epub filename in their links.
+	// resolvedLinks may not include links to binary/custom file types.
+	const epubBasename =
+		epubPath.split("/").pop()?.replace(/\.epub$/, "") ?? "";
+	if (sourceFiles.size === 0 && epubBasename) {
 		const mdFiles = app.vault.getMarkdownFiles();
 		for (const file of mdFiles) {
 			const cache = app.metadataCache.getFileCache(file);
 			if (!cache?.links) continue;
+			// Quick string check before expensive resolution
+			const hasCandidate = cache.links.some((l) =>
+				l.link.contains(epubBasename),
+			);
+			if (!hasCandidate) continue;
 			for (const linkCache of cache.links) {
 				const { path } = parseLinktext(linkCache.link);
 				const dest = app.metadataCache.getFirstLinkpathDest(
@@ -118,10 +125,16 @@ export function watchBacklinks(
 		true,
 	);
 
-	// Listen for any metadata change — since resolvedLinks may not track epub targets,
-	// we trigger on any file change rather than checking resolvedLinks
-	const changedRef = app.metadataCache.on("changed", () => {
-		rescan();
+	// Only rescan when a changed file contains links to our epub
+	const epubBasename = epubPath.split("/").pop()?.replace(/\.epub$/, "") ?? "";
+
+	const changedRef = app.metadataCache.on("changed", (file, _data, cache) => {
+		// Quick check: does this file's links mention the epub filename?
+		if (!cache?.links) return;
+		const hasEpubLink = cache.links.some((l) => l.link.contains(epubBasename));
+		if (hasEpubLink) {
+			rescan();
+		}
 	});
 
 	const resolvedRef = app.metadataCache.on("resolved", () => {

@@ -244,6 +244,10 @@
 	color: var(--text-normal);
 }
 
+.epub-plus-bl-filter-btn.is-active {
+	color: var(--text-accent);
+}
+
 .epub-plus-bl-count {
 	font-size: 11px;
 	color: var(--text-faint);

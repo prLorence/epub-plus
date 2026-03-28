@@ -227,10 +227,16 @@ export class EpubRenderer {
 		};
 	}
 
+	forceResize(): void {
+		this.handleResize();
+	}
+
 	private handleResize(): void {
 		if (!this.rendition) return;
 		const { width, height } = this.getContainerSize();
-		this.rendition.resize(width, height);
+		if (width > 0 && height > 0) {
+			this.rendition.resize(width, height);
+		}
 	}
 
 	private resolveTheme(): Record<string, Record<string, string>> {

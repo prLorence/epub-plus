@@ -84,10 +84,10 @@ export class BacklinkPanel {
 		header.createEl("span", { text: "Backlinks" });
 
 		const filterBtn = header.createEl("button", {
-			cls: "epub-plus-bl-filter-btn",
+			cls: `epub-plus-bl-filter-btn ${this.filterByChapter ? "is-active" : ""}`,
 			title: "Filter by current chapter",
+			text: "\u2261",
 		});
-		filterBtn.textContent = this.filterByChapter ? "\u25C9" : "\u25CB";
 		filterBtn.addEventListener("click", () => {
 			this.filterByChapter = !this.filterByChapter;
 			this.render();

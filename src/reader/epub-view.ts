@@ -135,10 +135,22 @@ export class EpubView extends FileView {
 		// Display at saved position or pending CFI
 		const startCfi = this.pendingCfi ?? this.getSavedCfi(file);
 		this.pendingCfi = null;
-		await this.renderer.display(startCfi ?? undefined);
+
+		try {
+			await this.renderer.display(startCfi ?? undefined);
+		} catch {
+			// If display fails (e.g., bad saved CFI), display from beginning
+			await this.renderer.display();
+		}
 
 		// Book is ready — hide loading screen
 		this.hideLoading();
+
+		// Force a re-render after a brief delay to fix blank page issues
+		// when the container's layout wasn't finalized during initial render
+		setTimeout(() => {
+			this.renderer?.forceResize();
+		}, 300);
 
 		// Phase 2: Backlink highlighting
 		this.setupBacklinkHighlighting(file);
