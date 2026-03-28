@@ -1,7 +1,11 @@
 import { Plugin, TFile, parseLinktext, WorkspaceLeaf } from "obsidian";
 import type { PaneType, OpenViewState } from "obsidian";
 import { EPUB_VIEW_TYPE } from "./constants";
-import { DEFAULT_SETTINGS, EpubPlusSettingTab } from "./settings";
+import {
+	DEFAULT_SETTINGS,
+	EpubPlusSettingTab,
+	migrateSettings,
+} from "./settings";
 import type { EpubPlusSettings } from "./settings";
 import { EpubView } from "./reader/epub-view";
 import { ProgressStore } from "./progress/progress-store";
@@ -19,12 +23,10 @@ export default class EpubPlusPlugin extends Plugin {
 		| null = null;
 
 	async onload(): Promise<void> {
-		// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData(),
+		const loaded = migrateSettings(
+			(await this.loadData()) as Partial<EpubPlusSettings> ?? {},
 		);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
 
 		this.progressStore = new ProgressStore(this.app.vault);
 		await this.progressStore.load();

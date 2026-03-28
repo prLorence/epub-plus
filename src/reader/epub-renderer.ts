@@ -4,6 +4,7 @@ import type { EpubPlusSettings } from "../settings";
 export interface EpubRendererCallbacks {
 	onRelocated: (location: Location) => void;
 	onSelected: (cfiRange: string, contents: Contents) => void;
+	onRendered?: () => void;
 }
 
 export class EpubRenderer {
@@ -45,6 +46,10 @@ export class EpubRenderer {
 			this.callbacks.onSelected(cfiRange, contents);
 		});
 
+		this.rendition.on("rendered", () => {
+			this.callbacks.onRendered?.();
+		});
+
 		this.resizeObserver = new ResizeObserver(() => {
 			this.handleResize();
 		});
@@ -77,6 +82,14 @@ export class EpubRenderer {
 
 	getToc(): NavItem[] {
 		return this.book?.navigation?.toc ?? [];
+	}
+
+	getRendition(): Rendition | null {
+		return this.rendition;
+	}
+
+	getCurrentHref(): string | null {
+		return this.rendition?.location?.start?.href ?? null;
 	}
 
 	async getBookTitle(): Promise<string> {

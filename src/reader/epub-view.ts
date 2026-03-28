@@ -1,11 +1,29 @@
 import { FileView, TFile, WorkspaceLeaf, Scope, Notice } from "obsidian";
+import type { EventRef } from "obsidian";
 import type { Location, Contents } from "epubjs";
 import { EPUB_VIEW_TYPE } from "../constants";
 import { EpubRenderer } from "./epub-renderer";
 import { TocPanel } from "./toc-panel";
 import { ReaderToolbar } from "./reader-toolbar";
 import { parseEpubSubpath } from "../links/epub-link-parser";
-import { copyLinkToSelection } from "../links/link-copy";
+import {
+	copyLinkToSelection,
+	appendLinkToActiveNote,
+} from "../links/link-copy";
+import type { LinkCopyContext } from "../links/link-copy";
+import {
+	scanBacklinksForEpub,
+	watchBacklinks,
+} from "../backlinks/backlink-scanner";
+import { HighlightManager } from "../backlinks/highlight-manager";
+import { BacklinkPanel } from "../backlinks/backlink-panel";
+import { HoverSyncBridge } from "../backlinks/hover-sync";
+import {
+	showHighlightPopover,
+	navigateToBacklink,
+} from "../backlinks/hover-popover";
+import { showColorPalettePopup } from "./color-palette";
+import type { PaletteColor } from "../types";
 import type EpubPlusPlugin from "../main";
 
 export class EpubView extends FileView {
@@ -13,6 +31,10 @@ export class EpubView extends FileView {
 	private renderer: EpubRenderer | null = null;
 	private tocPanel: TocPanel | null = null;
 	private toolbar: ReaderToolbar | null = null;
+	private highlightManager: HighlightManager | null = null;
+	private backlinkPanel: BacklinkPanel | null = null;
+	private hoverSync: HoverSyncBridge | null = null;
+	private backlinkWatchRefs: EventRef[] = [];
 	private pendingCfi: string | null = null;
 	private containerEl_: HTMLElement | null = null;
 	private renditionEl: HTMLElement | null = null;
@@ -63,11 +85,7 @@ export class EpubView extends FileView {
 				});
 				this.pendingCfi = null;
 			}
-			// Navigate this leaf back (undo the file open)
-			void this.leaf.setViewState({
-				type: "empty",
-				state: {},
-			});
+			void this.leaf.setViewState({ type: "empty", state: {} });
 			void this.app.workspace.revealLeaf(existingLeaf);
 			return;
 		}
@@ -84,29 +102,30 @@ export class EpubView extends FileView {
 					this.handleRelocated(location),
 				onSelected: (cfiRange: string, contents: Contents) =>
 					this.handleSelected(cfiRange, contents),
+				onRendered: () => this.handleRendered(),
 			},
 		);
 
 		await this.renderer.open(data);
 
-		// Set up TOC
+		// TOC panel
 		this.tocPanel = new TocPanel(
 			this.containerEl_!.querySelector(".epub-plus-toc-panel")!,
 			this.renderer.getToc(),
 			(href) => void this.renderer?.display(href),
 		);
-
 		if (this.plugin.settings.showTocOnOpen) {
 			this.tocPanel.show();
 		}
 
-		// Set up toolbar
+		// Toolbar
 		this.toolbar = new ReaderToolbar(
 			this.containerEl_!.querySelector(".epub-plus-toolbar")!,
 			{
 				onPrev: () => void this.renderer?.prev(),
 				onNext: () => void this.renderer?.next(),
 				onTocToggle: () => this.tocPanel?.toggle(),
+				onBacklinksToggle: () => this.backlinkPanel?.toggle(),
 				onFontSizeChange: (delta) => this.changeFontSize(delta),
 			},
 		);
@@ -115,10 +134,14 @@ export class EpubView extends FileView {
 		const startCfi = this.pendingCfi ?? this.getSavedCfi(file);
 		this.pendingCfi = null;
 		await this.renderer.display(startCfi ?? undefined);
+
+		// Phase 2: Backlink highlighting
+		this.setupBacklinkHighlighting(file);
 	}
 
 	async onUnloadFile(file: TFile): Promise<void> {
 		this.saveProgress();
+		this.teardownBacklinks();
 		this.renderer?.destroy();
 		this.renderer = null;
 		this.tocPanel = null;
@@ -152,7 +175,9 @@ export class EpubView extends FileView {
 		contentEl.empty();
 		contentEl.addClass("epub-plus-root");
 
-		this.containerEl_ = contentEl.createDiv({ cls: "epub-plus-container" });
+		this.containerEl_ = contentEl.createDiv({
+			cls: "epub-plus-container",
+		});
 		this.containerEl_.createDiv({ cls: "epub-plus-toc-panel" });
 
 		const readerArea = this.containerEl_.createDiv({
@@ -163,22 +188,140 @@ export class EpubView extends FileView {
 			cls: "epub-plus-rendition",
 		});
 		readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
+
+		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
+	}
+
+	// ── Phase 2: Backlink Highlighting ──
+
+	private setupBacklinkHighlighting(file: TFile): void {
+		if (!this.plugin.settings.enableBacklinkHighlighting) return;
+		if (!this.renderer) return;
+
+		const settings = this.plugin.settings;
+
+		// Highlight manager
+		this.highlightManager = new HighlightManager(
+			() => this.renderer?.getRendition() ?? null,
+			settings.colorPalette,
+			settings.highlightOpacity,
+			{
+				onHighlightClick: (bls, e) =>
+					this.handleHighlightClick(bls, e),
+				onHighlightHover: (bls, e) =>
+					this.handleHighlightHover(bls, e),
+			},
+		);
+
+		// Backlink panel
+		const panelEl = this.containerEl_?.querySelector(
+			".epub-plus-backlink-panel",
+		) as HTMLElement | null;
+		if (panelEl) {
+			this.backlinkPanel = new BacklinkPanel(this.app, panelEl, {
+				onEntryHover: (bl) =>
+					this.hoverSync?.onPanelEntryHover(bl),
+				onEntryClick: (bl) => navigateToBacklink(this.app, bl),
+			});
+			if (settings.showBacklinkPanel) {
+				this.backlinkPanel.show();
+			}
+			this.backlinkPanel.setFilterByChapter(
+				settings.filterBacklinksByChapter,
+			);
+		}
+
+		// Hover sync bridge
+		this.hoverSync = new HoverSyncBridge(
+			this.highlightManager,
+			this.backlinkPanel,
+			this.renderer,
+			settings.hoverSyncMode,
+		);
+
+		// Initial scan
+		const backlinks = scanBacklinksForEpub(
+			this.app,
+			file.path,
+			settings.defaultHighlightColor,
+		);
+		this.highlightManager.applyBacklinks(backlinks);
+		this.backlinkPanel?.setBacklinks(backlinks);
+
+		// Watch for changes
+		this.backlinkWatchRefs = watchBacklinks(
+			this.app,
+			file.path,
+			settings.defaultHighlightColor,
+			(updatedBacklinks) => {
+				this.highlightManager?.applyBacklinks(updatedBacklinks);
+				this.backlinkPanel?.setBacklinks(updatedBacklinks);
+			},
+		);
+	}
+
+	private teardownBacklinks(): void {
+		for (const ref of this.backlinkWatchRefs) {
+			this.app.metadataCache.offref(ref);
+		}
+		this.backlinkWatchRefs = [];
+		this.highlightManager?.clearAll();
+		this.highlightManager = null;
+		this.backlinkPanel = null;
+		this.hoverSync = null;
+	}
+
+	private handleHighlightClick(
+		backlinks: import("../types").EpubBacklink[],
+		event: MouseEvent,
+	): void {
+		if (event.ctrlKey || event.metaKey) {
+			// Ctrl/Cmd+click → open source note
+			if (backlinks.length > 0) {
+				navigateToBacklink(this.app, backlinks[0]!);
+			}
+		} else if (this.plugin.settings.hoverAction === "preview") {
+			showHighlightPopover(this.app, backlinks, event, this.leaf);
+		}
+	}
+
+	private handleHighlightHover(
+		backlinks: import("../types").EpubBacklink[] | null,
+		_event: MouseEvent,
+	): void {
+		this.hoverSync?.onHighlightHover(backlinks);
+	}
+
+	// ── Event Handlers ──
+
+	private handleRendered(): void {
+		// Re-apply highlight hover listeners after EPUB.js renders a new section
+		// EPUB.js auto-injects annotations into new views, but our custom hover
+		// listeners need to be re-attached to the new DOM elements
+		this.highlightManager?.reattachHoverListeners();
 	}
 
 	private handleRelocated(location: Location): void {
 		if (this.toolbar && this.renderer) {
 			this.toolbar.updateProgress(this.renderer.getPercentage());
-			this.toolbar.updateChapter(this.renderer.getCurrentChapterTitle());
+			this.toolbar.updateChapter(
+				this.renderer.getCurrentChapterTitle(),
+			);
 		}
 
 		if (this.tocPanel) {
 			this.tocPanel.setActiveHref(location.start.href);
 		}
 
+		// Update backlink panel chapter filter
+		this.backlinkPanel?.setCurrentChapter(location.start.href);
+
 		if (this.file && this.plugin.settings.autoSaveProgress) {
 			this.plugin.progressStore.set(this.file.path, {
 				cfi: location.start.cfi,
-				percent: Math.round((location.start.percentage ?? 0) * 100),
+				percent: Math.round(
+					(location.start.percentage ?? 0) * 100,
+				),
 				updated: new Date().toISOString(),
 			});
 			this.plugin.progressStore.scheduleSave();
@@ -199,47 +342,67 @@ export class EpubView extends FileView {
 		text: string,
 	): void {
 		const doc = contents.document;
-		const existing = doc.querySelector(".epub-plus-selection-popup");
-		if (existing) existing.remove();
-
 		const selection = contents.window.getSelection();
 		if (!selection || selection.rangeCount === 0) return;
 
 		const range = selection.getRangeAt(0);
 		const rect = range.getBoundingClientRect();
+		const palette = this.plugin.settings.colorPalette;
 
-		const popup = doc.createElement("div");
-		popup.className = "epub-plus-selection-popup";
-		popup.setAttribute(
-			"style",
-			`position:absolute;left:${rect.left + rect.width / 2}px;top:${rect.top - 36}px;` +
-				"transform:translateX(-50%);z-index:9999;background:#333;color:#fff;" +
-				"padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;" +
-				"box-shadow:0 2px 8px rgba(0,0,0,0.3);white-space:nowrap;",
-		);
-		popup.textContent = "Copy link";
-
-		popup.addEventListener("click", () => {
-			void copyLinkToSelection(
-				this.file!,
-				cfiRange,
-				text,
-				this.renderer?.getCurrentChapterTitle() ?? "",
-				this.plugin.settings.defaultHighlightColor,
-				this.plugin.settings.copyTemplate,
-			).then(() => {
-				popup.remove();
-				new Notice("Link copied to clipboard");
-			});
+		showColorPalettePopup(doc, rect, palette, {
+			onColorSelect: (color: PaletteColor) => {
+				void this.copyWithColor(cfiRange, text, color.name);
+			},
+			onAddToNote: (color: PaletteColor) => {
+				void this.addToActiveNote(cfiRange, text, color.name);
+			},
 		});
+	}
 
-		const removePopup = () => {
-			popup.remove();
-			doc.removeEventListener("click", removePopup);
+	private async copyWithColor(
+		cfiRange: string,
+		text: string,
+		color: string,
+	): Promise<void> {
+		const ctx = await this.buildLinkContext(cfiRange, text, color);
+		await copyLinkToSelection(ctx);
+		new Notice("Link copied to clipboard");
+	}
+
+	private async addToActiveNote(
+		cfiRange: string,
+		text: string,
+		color: string,
+	): Promise<void> {
+		const ctx = await this.buildLinkContext(cfiRange, text, color);
+		const added = appendLinkToActiveNote(
+			this.app,
+			ctx,
+			this.plugin.settings.addToNoteMode,
+		);
+		if (added) {
+			new Notice("Link added to active note");
+		} else {
+			new Notice("No active note to add link to");
+		}
+	}
+
+	private async buildLinkContext(
+		cfiRange: string,
+		text: string,
+		color: string,
+	): Promise<LinkCopyContext> {
+		return {
+			file: this.file!,
+			cfiRange,
+			selectedText: text,
+			chapterTitle:
+				this.renderer?.getCurrentChapterTitle() ?? "",
+			color,
+			template: this.plugin.settings.copyTemplate,
+			bookTitle: await this.renderer?.getBookTitle(),
+			bookAuthor: await this.renderer?.getBookAuthor(),
 		};
-		setTimeout(() => doc.addEventListener("click", removePopup), 100);
-
-		doc.body.appendChild(popup);
 	}
 
 	private changeFontSize(delta: number): void {

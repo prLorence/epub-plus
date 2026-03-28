@@ -2,6 +2,7 @@ export interface ToolbarCallbacks {
 	onPrev: () => void;
 	onNext: () => void;
 	onTocToggle: () => void;
+	onBacklinksToggle?: () => void;
 	onFontSizeChange: (delta: number) => void;
 }
 
@@ -60,13 +61,23 @@ export class ReaderToolbar {
 			cls: "epub-plus-toolbar-progress",
 		});
 
-		// Right: font controls + next
+		// Right: font controls, backlinks toggle, next
 		this.createButton(right, "A\u2212", "Decrease font size", () =>
 			this.callbacks.onFontSizeChange(-1),
 		);
 		this.createButton(right, "A+", "Increase font size", () =>
 			this.callbacks.onFontSizeChange(1),
 		);
+
+		if (this.callbacks.onBacklinksToggle) {
+			this.createButton(
+				right,
+				"\u{1F517}",
+				"Toggle backlinks panel",
+				() => this.callbacks.onBacklinksToggle!(),
+			);
+		}
+
 		this.createButton(right, "\u2192", "Next page", () =>
 			this.callbacks.onNext(),
 		);

@@ -1,17 +1,51 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type EpubPlusPlugin from "./main";
+import type { PaletteColor } from "./types";
+import { DEFAULT_PALETTE } from "./constants";
+
+export interface CopyTemplate {
+	name: string;
+	template: string;
+}
 
 export interface EpubPlusSettings {
+	// Reader
 	readingMode: "paginated" | "scrolled";
 	fontSize: number;
 	fontFamily: string;
 	lineHeight: number;
 	theme: "auto" | "light" | "dark" | "sepia";
+	showTocOnOpen: boolean;
+	autoSaveProgress: boolean;
+
+	// Backlink highlighting
+	enableBacklinkHighlighting: boolean;
+	highlightOpacity: number;
+	colorPalette: PaletteColor[];
+
+	// Copy & templates
 	defaultHighlightColor: string;
 	copyTemplate: string;
-	autoSaveProgress: boolean;
-	showTocOnOpen: boolean;
+	copyTemplates: CopyTemplate[];
+	defaultTemplateName: string;
+	autoCopyOnHighlight: boolean;
+	addToNoteMode: "append" | "cursor";
+
+	// Hover & navigation
+	hoverAction: "preview" | "open" | "disabled";
+	hoverSyncMode:
+		| "both"
+		| "epub-to-backlinks"
+		| "backlinks-to-epub"
+		| "disabled";
+
+	// Chapter filter
+	filterBacklinksByChapter: boolean;
+	showBacklinkPanel: boolean;
 }
+
+const DEFAULT_TEMPLATE =
+	"> [!quote|{{color}}] {{chapter}}\n> {{selection}}\n> — {{link}}";
 
 export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	readingMode: "paginated",
@@ -19,12 +53,44 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	fontFamily: "",
 	lineHeight: 1.5,
 	theme: "auto",
-	defaultHighlightColor: "yellow",
-	copyTemplate:
-		"> [!quote|{{color}}] {{chapter}}\n> {{selection}}\n> — {{link}}",
-	autoSaveProgress: true,
 	showTocOnOpen: false,
+	autoSaveProgress: true,
+
+	enableBacklinkHighlighting: true,
+	highlightOpacity: 0.3,
+	colorPalette: [...DEFAULT_PALETTE],
+
+	defaultHighlightColor: "yellow",
+	copyTemplate: DEFAULT_TEMPLATE,
+	copyTemplates: [{ name: "Default", template: DEFAULT_TEMPLATE }],
+	defaultTemplateName: "Default",
+	autoCopyOnHighlight: false,
+	addToNoteMode: "append",
+
+	hoverAction: "preview",
+	hoverSyncMode: "both",
+
+	filterBacklinksByChapter: false,
+	showBacklinkPanel: true,
 };
+
+/**
+ * Migrate old single-template settings to multi-template format.
+ */
+export function migrateSettings(
+	loaded: Partial<EpubPlusSettings>,
+): Partial<EpubPlusSettings> {
+	if (
+		loaded.copyTemplate &&
+		(!loaded.copyTemplates || loaded.copyTemplates.length === 0)
+	) {
+		loaded.copyTemplates = [
+			{ name: "Default", template: loaded.copyTemplate },
+		];
+		loaded.defaultTemplateName = "Default";
+	}
+	return loaded;
+}
 
 export class EpubPlusSettingTab extends PluginSettingTab {
 	plugin: EpubPlusPlugin;
@@ -38,6 +104,14 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		this.renderReaderSection(containerEl);
+		this.renderBacklinkSection(containerEl);
+		this.renderCopySection(containerEl);
+		this.renderHoverSection(containerEl);
+		this.renderProgressSection(containerEl);
+	}
+
+	private renderReaderSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("Reader").setHeading();
 
 		new Setting(containerEl)
@@ -51,7 +125,8 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					})
 					.setValue(this.plugin.settings.readingMode)
 					.onChange(async (v) => {
-						this.plugin.settings.readingMode = v as EpubPlusSettings["readingMode"];
+						this.plugin.settings.readingMode =
+							v as EpubPlusSettings["readingMode"];
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -110,7 +185,8 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					})
 					.setValue(this.plugin.settings.theme)
 					.onChange(async (v) => {
-						this.plugin.settings.theme = v as EpubPlusSettings["theme"];
+						this.plugin.settings.theme =
+							v as EpubPlusSettings["theme"];
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -125,21 +201,151 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+	}
 
-		new Setting(containerEl).setName("Links and highlights").setHeading();
+	private renderBacklinkSection(containerEl: HTMLElement): void {
+		new Setting(containerEl)
+			.setName("Backlink highlighting")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable backlink highlighting")
+			.setDesc("Render backlinks as colored highlights in the reader.")
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.enableBacklinkHighlighting)
+					.onChange(async (v) => {
+						this.plugin.settings.enableBacklinkHighlighting = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Highlight opacity")
+			.setDesc("Opacity of backlink highlights (0.1 to 1.0).")
+			.addSlider((s) =>
+				s
+					.setLimits(0.1, 1.0, 0.05)
+					.setValue(this.plugin.settings.highlightOpacity)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						this.plugin.settings.highlightOpacity = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Show backlink panel")
+			.setDesc("Show a panel listing backlinks for the current book.")
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.showBacklinkPanel)
+					.onChange(async (v) => {
+						this.plugin.settings.showBacklinkPanel = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Filter backlinks by chapter")
+			.setDesc(
+				"Only show backlinks pointing to the currently visible chapter.",
+			)
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.filterBacklinksByChapter)
+					.onChange(async (v) => {
+						this.plugin.settings.filterBacklinksByChapter = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		// Color palette editor
+		new Setting(containerEl)
+			.setName("Color palette")
+			.setDesc("Colors available for highlighting. Click + to add.");
+
+		const paletteContainer = containerEl.createDiv({
+			cls: "epub-plus-palette-editor",
+		});
+		this.renderPaletteEditor(paletteContainer);
+	}
+
+	private renderPaletteEditor(container: HTMLElement): void {
+		container.empty();
+		const palette = this.plugin.settings.colorPalette;
+
+		for (let i = 0; i < palette.length; i++) {
+			const color = palette[i]!;
+			const row = container.createDiv({
+				cls: "epub-plus-palette-row",
+			});
+
+			const swatch = row.createEl("span", {
+				cls: "epub-plus-palette-swatch",
+			});
+			swatch.style.backgroundColor = color.hex;
+
+			const nameInput = row.createEl("input", {
+				type: "text",
+				value: color.name,
+				cls: "epub-plus-palette-name",
+			});
+			nameInput.addEventListener("change", () => {
+				palette[i] = { ...color, name: nameInput.value };
+				void this.plugin.saveSettings();
+			});
+
+			const hexInput = row.createEl("input", {
+				type: "color",
+				value: color.hex,
+				cls: "epub-plus-palette-hex",
+			});
+			hexInput.addEventListener("input", () => {
+				palette[i] = { ...color, hex: hexInput.value };
+				swatch.style.backgroundColor = hexInput.value;
+				void this.plugin.saveSettings();
+			});
+
+			const deleteBtn = row.createEl("button", {
+				text: "\u00d7",
+				cls: "epub-plus-palette-delete",
+				title: "Remove color",
+			});
+			deleteBtn.addEventListener("click", () => {
+				palette.splice(i, 1);
+				void this.plugin.saveSettings();
+				this.renderPaletteEditor(container);
+			});
+		}
+
+		const addBtn = container.createEl("button", {
+			text: "Add color",
+			cls: "epub-plus-palette-add",
+		});
+		addBtn.addEventListener("click", () => {
+			palette.push({ name: "new", hex: "#cccccc" });
+			void this.plugin.saveSettings();
+			this.renderPaletteEditor(container);
+		});
+	}
+
+	private renderCopySection(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName("Copy and templates").setHeading();
 
 		new Setting(containerEl)
 			.setName("Default highlight color")
 			.setDesc("Color name used when copying a link to selection.")
-			.addText((t) =>
-				t
-					.setPlaceholder("Yellow")
-					.setValue(this.plugin.settings.defaultHighlightColor)
-					.onChange(async (v) => {
-						this.plugin.settings.defaultHighlightColor = v;
-						await this.plugin.saveSettings();
-					}),
-			);
+			.addDropdown((d) => {
+				for (const c of this.plugin.settings.colorPalette) {
+					d.addOption(c.name, c.name);
+				}
+				d.setValue(this.plugin.settings.defaultHighlightColor);
+				d.onChange(async (v) => {
+					this.plugin.settings.defaultHighlightColor = v;
+					await this.plugin.saveSettings();
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Copy template")
@@ -148,7 +354,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 			)
 			.addTextArea((t) =>
 				t
-					.setPlaceholder(DEFAULT_SETTINGS.copyTemplate)
+					.setPlaceholder(DEFAULT_TEMPLATE)
 					.setValue(this.plugin.settings.copyTemplate)
 					.onChange(async (v) => {
 						this.plugin.settings.copyTemplate = v;
@@ -156,6 +362,82 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl)
+			.setName("Auto-copy on highlight")
+			.setDesc("Automatically copy the link when selecting a color.")
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.autoCopyOnHighlight)
+					.onChange(async (v) => {
+						this.plugin.settings.autoCopyOnHighlight = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Add to note mode")
+			.setDesc(
+				"When adding a link to the active note, append at end or insert at cursor.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						append: "Append to end",
+						cursor: "Insert at cursor",
+					})
+					.setValue(this.plugin.settings.addToNoteMode)
+					.onChange(async (v) => {
+						this.plugin.settings.addToNoteMode =
+							v as EpubPlusSettings["addToNoteMode"];
+						await this.plugin.saveSettings();
+					}),
+			);
+	}
+
+	private renderHoverSection(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName("Hover and navigation").setHeading();
+
+		new Setting(containerEl)
+			.setName("Hover action")
+			.setDesc("What happens when hovering over a highlight.")
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						preview: "Show preview",
+						open: "Open note",
+						disabled: "Disabled",
+					})
+					.setValue(this.plugin.settings.hoverAction)
+					.onChange(async (v) => {
+						this.plugin.settings.hoverAction =
+							v as EpubPlusSettings["hoverAction"];
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Hover sync")
+			.setDesc(
+				"Synchronize hover between highlights and backlink panel.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						both: "Both directions",
+						"epub-to-backlinks": "EPUB to backlinks only",
+						"backlinks-to-epub": "Backlinks to EPUB only",
+						disabled: "Disabled",
+					})
+					.setValue(this.plugin.settings.hoverSyncMode)
+					.onChange(async (v) => {
+						this.plugin.settings.hoverSyncMode =
+							v as EpubPlusSettings["hoverSyncMode"];
+						await this.plugin.saveSettings();
+					}),
+			);
+	}
+
+	private renderProgressSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("Progress").setHeading();
 
 		new Setting(containerEl)

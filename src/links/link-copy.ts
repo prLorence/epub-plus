@@ -1,39 +1,69 @@
+import { App, MarkdownView } from "obsidian";
 import type { TFile } from "obsidian";
 import type { EpubLinkParams } from "../types";
 import { buildEpubSubpath, parseCfiRange } from "./epub-link-parser";
 
-export async function copyLinkToSelection(
-	file: TFile,
-	cfiRange: string,
-	selectedText: string,
-	chapterTitle: string,
-	color: string,
-	template: string,
-): Promise<void> {
-	const { start, end } = parseCfiRange(cfiRange);
+export interface LinkCopyContext {
+	file: TFile;
+	cfiRange: string;
+	selectedText: string;
+	chapterTitle: string;
+	color: string;
+	template: string;
+	bookTitle?: string;
+	bookAuthor?: string;
+}
+
+export async function copyLinkToSelection(ctx: LinkCopyContext): Promise<string> {
+	const formatted = buildFormattedLink(ctx);
+	await navigator.clipboard.writeText(formatted);
+	return formatted;
+}
+
+export function appendLinkToActiveNote(
+	app: App,
+	ctx: LinkCopyContext,
+	mode: "append" | "cursor",
+): boolean {
+	const formatted = buildFormattedLink(ctx);
+	const mdView = app.workspace.getActiveViewOfType(MarkdownView);
+	if (!mdView) return false;
+
+	const editor = mdView.editor;
+	if (mode === "cursor") {
+		editor.replaceSelection(formatted + "\n");
+	} else {
+		const lastLine = editor.lastLine();
+		const lastLineText = editor.getLine(lastLine);
+		const insertPos = { line: lastLine, ch: lastLineText.length };
+		editor.replaceRange("\n" + formatted, insertPos);
+	}
+	return true;
+}
+
+function buildFormattedLink(ctx: LinkCopyContext): string {
+	const { start, end } = parseCfiRange(ctx.cfiRange);
 
 	const params: EpubLinkParams = {
 		cfi: start,
 		end: end,
-		color,
-		text: selectedText.slice(0, 100),
-		chapter: chapterTitle || undefined,
+		color: ctx.color,
+		text: ctx.selectedText.slice(0, 100),
+		chapter: ctx.chapterTitle || undefined,
 	};
 
 	const subpath = buildEpubSubpath(params);
-	const link = `[[${file.path}${subpath}]]`;
+	const link = `[[${ctx.file.path}${subpath}]]`;
 
-	const formatted = applyTemplate(template, {
-		fileName: file.basename,
-		title: file.basename,
-		author: "",
-		chapter: chapterTitle,
-		selection: selectedText,
+	return applyTemplate(ctx.template, {
+		fileName: ctx.file.basename,
+		title: ctx.bookTitle ?? ctx.file.basename,
+		author: ctx.bookAuthor ?? "",
+		chapter: ctx.chapterTitle,
+		selection: ctx.selectedText,
 		link,
-		color,
+		color: ctx.color,
 	});
-
-	await navigator.clipboard.writeText(formatted);
 }
 
 function applyTemplate(
