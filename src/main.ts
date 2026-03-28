@@ -1,99 +1,151 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { Plugin, TFile, parseLinktext, WorkspaceLeaf } from "obsidian";
+import type { PaneType, OpenViewState } from "obsidian";
+import { EPUB_VIEW_TYPE } from "./constants";
+import { DEFAULT_SETTINGS, EpubPlusSettingTab } from "./settings";
+import type { EpubPlusSettings } from "./settings";
+import { EpubView } from "./reader/epub-view";
+import { ProgressStore } from "./progress/progress-store";
 
-// Remember to rename these classes and interfaces!
+export default class EpubPlusPlugin extends Plugin {
+	settings: EpubPlusSettings = DEFAULT_SETTINGS;
+	progressStore: ProgressStore = null!;
+	private originalOpenLinkText:
+		| ((
+				linktext: string,
+				sourcePath: string,
+				newLeaf?: PaneType | boolean,
+				openViewState?: OpenViewState,
+		  ) => Promise<void>)
+		| null = null;
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+	async onload(): Promise<void> {
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData(),
+		);
 
-	async onload() {
-		await this.loadSettings();
+		this.progressStore = new ProgressStore(this.app.vault);
+		await this.progressStore.load();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+		this.registerView(
+			EPUB_VIEW_TYPE,
+			(leaf) => new EpubView(leaf, this),
+		);
+		this.registerExtensions(["epub"], EPUB_VIEW_TYPE);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+		this.patchOpenLinkText();
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
+			id: "continue-reading",
+			name: "Continue reading",
+			callback: () => this.continueReading(),
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		this.addSettingTab(new EpubPlusSettingTab(this.app, this));
 	}
 
-	onunload() {
+	onunload(): void {
+		this.unpatchOpenLinkText();
+		void this.progressStore.save();
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
-	}
-
-	async saveSettings() {
+	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 	}
-}
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+	/**
+	 * Find an existing workspace leaf that has a given epub file open.
+	 */
+	findExistingEpubLeaf(
+		filePath: string,
+		excludeLeaf?: WorkspaceLeaf,
+	): WorkspaceLeaf | null {
+		const leaves = this.app.workspace.getLeavesOfType(EPUB_VIEW_TYPE);
+		for (const leaf of leaves) {
+			if (excludeLeaf && leaf === excludeLeaf) continue;
+			if (
+				leaf.view instanceof EpubView &&
+				leaf.view.file?.path === filePath
+			) {
+				return leaf;
+			}
+		}
+		return null;
 	}
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+	private patchOpenLinkText(): void {
+		this.originalOpenLinkText =
+			this.app.workspace.openLinkText.bind(this.app.workspace);
+
+		this.app.workspace.openLinkText = async (
+			linktext: string,
+			sourcePath: string,
+			newLeaf?: PaneType | boolean,
+			openViewState?: OpenViewState,
+		): Promise<void> => {
+			const { path, subpath } = parseLinktext(linktext);
+			const resolved =
+				this.app.metadataCache.getFirstLinkpathDest(
+					path,
+					sourcePath,
+				);
+
+			if (resolved && resolved.extension === "epub") {
+				const existingLeaf = this.findExistingEpubLeaf(
+					resolved.path,
+				);
+
+				if (existingLeaf) {
+					this.app.workspace.setActiveLeaf(existingLeaf, {
+						focus: true,
+					});
+					if (subpath) {
+						existingLeaf.view.setEphemeralState({
+							subpath,
+						});
+					}
+					return;
+				}
+			}
+
+			return this.originalOpenLinkText!(
+				linktext,
+				sourcePath,
+				newLeaf,
+				openViewState,
+			);
+		};
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	private unpatchOpenLinkText(): void {
+		if (this.originalOpenLinkText) {
+			this.app.workspace.openLinkText =
+				this.originalOpenLinkText;
+			this.originalOpenLinkText = null;
+		}
+	}
+
+	private async continueReading(): Promise<void> {
+		const recent = this.progressStore.getMostRecent();
+		if (!recent) return;
+
+		const file = this.app.vault.getAbstractFileByPath(recent.path);
+		if (!(file instanceof TFile)) return;
+
+		const existingLeaf = this.findExistingEpubLeaf(file.path);
+
+		if (existingLeaf) {
+			this.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
+			existingLeaf.view.setEphemeralState({
+				subpath: `#cfi=${recent.progress.cfi}`,
+			});
+		} else {
+			const leaf = this.app.workspace.getLeaf(false);
+			await leaf.openFile(file, {
+				eState: { subpath: `#cfi=${recent.progress.cfi}` },
+			});
+		}
 	}
 }

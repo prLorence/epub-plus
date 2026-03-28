@@ -1,0 +1,67 @@
+import { TFile, Vault } from "obsidian";
+import { READING_STATE_FILE } from "../constants";
+import type { ReadingProgress, ReadingStateMap } from "../types";
+
+export class ProgressStore {
+	private state: ReadingStateMap = {};
+	private dirty = false;
+	private saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+	constructor(private vault: Vault) {}
+
+	async load(): Promise<void> {
+		const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
+		if (file instanceof TFile) {
+			try {
+				const raw = await this.vault.read(file);
+				this.state = JSON.parse(raw) as ReadingStateMap;
+			} catch {
+				this.state = {};
+			}
+		}
+	}
+
+	async save(): Promise<void> {
+		if (!this.dirty) return;
+		if (this.saveTimer) {
+			clearTimeout(this.saveTimer);
+			this.saveTimer = null;
+		}
+
+		const data = JSON.stringify(this.state, null, 2);
+		const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
+		if (file instanceof TFile) {
+			await this.vault.modify(file, data);
+		} else {
+			await this.vault.create(READING_STATE_FILE, data);
+		}
+		this.dirty = false;
+	}
+
+	scheduleSave(): void {
+		if (this.saveTimer) return;
+		this.saveTimer = setTimeout(() => {
+			this.saveTimer = null;
+			void this.save();
+		}, 2000);
+	}
+
+	get(filePath: string): ReadingProgress | undefined {
+		return this.state[filePath];
+	}
+
+	set(filePath: string, progress: ReadingProgress): void {
+		this.state[filePath] = progress;
+		this.dirty = true;
+	}
+
+	getMostRecent(): { path: string; progress: ReadingProgress } | null {
+		let latest: { path: string; progress: ReadingProgress } | null = null;
+		for (const [path, progress] of Object.entries(this.state)) {
+			if (!latest || progress.updated > latest.progress.updated) {
+				latest = { path, progress };
+			}
+		}
+		return latest;
+	}
+}
