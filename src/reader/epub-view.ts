@@ -113,12 +113,23 @@ export class EpubView extends FileView {
 	}
 
 	async onLoadFile(file: TFile): Promise<void> {
+		console.debug("[EPUB++] onLoadFile:", file.path);
+		try {
+		await this.onLoadFileInner(file);
+		} catch (e) {
+			console.error("[EPUB++] onLoadFile FAILED:", e);
+			new Notice(`Failed to open "${file.basename}": ${String(e)}`);
+		}
+	}
+
+	private async onLoadFileInner(file: TFile): Promise<void> {
 		// If another leaf already has this file open, redirect there instead
 		const existingLeaf = this.plugin.findExistingEpubLeaf(
 			file.path,
 			this.leaf,
 		);
 		if (existingLeaf) {
+			console.debug("[EPUB++] Redirecting to existing leaf");
 			this.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
 			if (this.pendingCfi) {
 				existingLeaf.view.setEphemeralState({
@@ -133,7 +144,9 @@ export class EpubView extends FileView {
 
 		this.buildDom();
 
+		console.debug("[EPUB++] Reading binary data...");
 		const data = await this.app.vault.readBinary(file);
+		console.debug("[EPUB++] Binary data size:", data.byteLength);
 
 		this.renderer = new EpubRenderer(
 			this.renditionEl!,
@@ -149,8 +162,13 @@ export class EpubView extends FileView {
 
 		await this.renderer.open(data);
 
-		// TOC panel
-		const toc = await this.renderer.getTocAsync();
+		// TOC panel — some EPUBs have missing/broken TOC files
+		let toc: import("epubjs").NavItem[] = [];
+		try {
+			toc = await this.renderer.getTocAsync();
+		} catch {
+			console.debug("[EPUB++] TOC loading failed, using empty TOC");
+		}
 		this.tocPanel = new TocPanel(
 			this.containerEl_!.querySelector(".epub-plus-toc-panel")!,
 			toc,
@@ -270,7 +288,9 @@ export class EpubView extends FileView {
 		this.renditionEl = readerArea.createDiv({
 			cls: "epub-plus-rendition",
 		});
-		readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
+		const bottomBar = readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
+		bottomBar.createDiv({ cls: "epub-plus-progress-fill" });
+		bottomBar.createDiv({ cls: "epub-plus-page-info" });
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
 	}
@@ -400,6 +420,27 @@ export class EpubView extends FileView {
 			this.toolbar.updateChapter(
 				this.renderer.getCurrentChapterTitle(),
 			);
+		}
+
+		// Update progress bar and page counter
+		const percent = Math.round(
+			(location.start.percentage ?? 0) * 100,
+		);
+		const fill = this.containerEl_?.querySelector(
+			".epub-plus-progress-fill",
+		) as HTMLElement | null;
+		if (fill) {
+			fill.setCssProps({ "--progress": `${String(percent)}%` });
+		}
+		const pageInfo = this.containerEl_?.querySelector(
+			".epub-plus-page-info",
+		) as HTMLElement | null;
+		if (pageInfo) {
+			const displayed = location.start.displayed;
+			if (displayed) {
+				pageInfo.textContent =
+					`${String(displayed.page)}/${String(displayed.total)}`;
+			}
 		}
 
 		if (this.tocPanel) {
@@ -540,9 +581,10 @@ export class EpubView extends FileView {
 	}
 
 	private changeFontSize(delta: number): void {
+		const current = this.plugin.settings.fontSize ?? 18;
 		this.plugin.settings.fontSize = Math.max(
 			10,
-			Math.min(32, this.plugin.settings.fontSize + delta),
+			Math.min(32, current + delta),
 		);
 		this.renderer?.updateSettings(this.plugin.settings);
 		void this.plugin.saveSettings();

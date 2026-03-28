@@ -35,11 +35,22 @@ export class EpubTextCache {
 			this.saveTimer = null;
 		}
 		const data = JSON.stringify(this.cache, null, 2);
-		const file = this.vault.getAbstractFileByPath(CACHE_FILE);
-		if (file instanceof TFile) {
-			await this.vault.modify(file, data);
-		} else {
-			await this.vault.create(CACHE_FILE, data);
+		try {
+			const file = this.vault.getAbstractFileByPath(CACHE_FILE);
+			if (file instanceof TFile) {
+				await this.vault.modify(file, data);
+			} else {
+				await this.vault.create(CACHE_FILE, data);
+			}
+		} catch {
+			try {
+				const file = this.vault.getAbstractFileByPath(CACHE_FILE);
+				if (file instanceof TFile) {
+					await this.vault.modify(file, data);
+				}
+			} catch {
+				// Give up silently
+			}
 		}
 		this.dirty = false;
 	}

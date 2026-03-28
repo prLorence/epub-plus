@@ -12,6 +12,7 @@ export class EpubRenderer {
 	private rendition: Rendition | null = null;
 	private locationsGenerated = false;
 	private resizeObserver: ResizeObserver | null = null;
+	private contentHookRegistered = false;
 	private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(
@@ -21,17 +22,27 @@ export class EpubRenderer {
 	) {}
 
 	async open(data: ArrayBuffer): Promise<void> {
+		console.debug("[EPUB++] Renderer.open: starting, data size:", data.byteLength);
 		this.book = ePub();
 		await this.book.open(data, "binary");
+		console.debug("[EPUB++] Renderer.open: book opened");
+
+		// Suppress unhandled rejections from optional book resources
+		// (e.g., missing TOC files in some EPUBs)
+		this.book.loaded.navigation.catch(() => {});
+		this.book.loaded.pageList.catch(() => {});
 
 		// Wait for next animation frame to ensure container is laid out
 		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 		// Use fixed fallback dimensions if container still has no size
 		let { width, height } = this.getContainerSize();
+		console.debug("[EPUB++] Renderer.open: container size:", width, "x", height,
+			"marginSize:", this.settings.marginSize);
 		if (width === 0 || height === 0) {
 			width = 800;
 			height = 600;
+			console.debug("[EPUB++] Renderer.open: using fallback size:", width, "x", height);
 		}
 
 		this.rendition = this.book.renderTo(this.containerEl, {
@@ -43,6 +54,7 @@ export class EpubRenderer {
 					? "paginated"
 					: "scrolled-doc",
 		});
+		console.debug("[EPUB++] Renderer.open: rendition created");
 
 		this.applyTheme();
 		this.applyFontSettings();
@@ -85,18 +97,24 @@ export class EpubRenderer {
 	}
 
 	async display(target?: string): Promise<void> {
-		if (!this.rendition) return;
+		if (!this.rendition) {
+			console.warn("[EPUB++] display: no rendition");
+			return;
+		}
 		// Wrap bare CFI paths (starting with /) in epubcfi() format.
 		// Leave hrefs (like "chapter1.xhtml") and existing epubcfi() strings as-is.
 		const displayTarget =
 			target && target.startsWith("/") && !target.startsWith("epubcfi(")
 				? `epubcfi(${target})`
 				: target;
-		await this.rendition.display(displayTarget);
-
-		// After first display, ensure dimensions are correct.
-		// The container may have been 0-sized when renderTo was called.
-		this.handleResize();
+		console.debug("[EPUB++] display:", displayTarget ?? "(beginning)");
+		try {
+			await this.rendition.display(displayTarget);
+			console.debug("[EPUB++] display: success");
+		} catch (e) {
+			console.error("[EPUB++] display: failed", e);
+			throw e;
+		}
 
 		if (!this.locationsGenerated && this.book) {
 			void this.book.locations.generate(1024).then(() => {
@@ -119,8 +137,13 @@ export class EpubRenderer {
 
 	async getTocAsync(): Promise<NavItem[]> {
 		if (!this.book) return [];
-		await this.book.loaded.navigation;
-		return this.book.navigation?.toc ?? [];
+		try {
+			await this.book.loaded.navigation;
+			return this.book.navigation?.toc ?? [];
+		} catch {
+			// Some EPUBs have missing/broken TOC files
+			return [];
+		}
 	}
 
 	getRendition(): Rendition | null {
@@ -180,40 +203,41 @@ export class EpubRenderer {
 
 	applyFontSettings(): void {
 		if (!this.rendition) return;
-		const margin = `${this.settings.marginSize}px`;
-		const styles: Record<string, string> = {
-			"font-size": `${this.settings.fontSize}px !important`,
-			"line-height": `${this.settings.lineHeight} !important`,
-			"padding-left": `${margin} !important`,
-			"padding-right": `${margin} !important`,
-			"max-width": "none !important",
-		};
-		if (this.settings.fontFamily) {
-			styles["font-family"] = `${this.settings.fontFamily} !important`;
-		}
+		const fontSize = this.settings.fontSize;
+		const lineHeight = this.settings.lineHeight;
+		const fontFamily = this.settings.fontFamily;
+		const opacity = this.settings.highlightOpacity;
 
-		this.rendition.themes.default({
-			body: styles,
-			p: {
-				"text-align": "justify",
-				"text-indent": "1.5em",
-				"margin-top": "0.5em",
-				"margin-bottom": "0.5em",
-			},
-			"h1, h2, h3, h4, h5, h6": {
-				"text-indent": "0",
-				"text-align": "left",
-				"margin-top": "1.5em",
-				"margin-bottom": "0.5em",
-			},
-			".epubjs-hl": {
-				fill: "yellow",
-				"fill-opacity": String(this.settings.highlightOpacity),
-				"mix-blend-mode": "multiply",
-			},
-			"::selection": {
-				background: "rgba(255,255,0, 0.3)",
-			},
+		// Font size and line height are user-explicit settings — use !important
+		// so they override the book's CSS. Font family is optional — only
+		// override if the user set one.
+		const bodyStyles: Record<string, string> = {
+			"font-size": `${fontSize ?? 18}px !important`,
+			"line-height": `${lineHeight ?? 1.6} !important`,
+		};
+		if (fontFamily) {
+			bodyStyles["font-family"] = `${fontFamily} !important`;
+		}
+		this.rendition.themes.default({ body: bodyStyles });
+
+		// Inject styles into each rendered section (only register once).
+		if (this.contentHookRegistered) return;
+		this.contentHookRegistered = true;
+		this.rendition.hooks.content.register((contents: Contents) => {
+			void contents.addStylesheetCss(`
+				.epubjs-hl {
+					fill: yellow;
+					fill-opacity: ${opacity};
+					mix-blend-mode: multiply;
+				}
+				::selection {
+					background: rgba(255,255,0, 0.3);
+				}
+				body {
+					text-rendering: optimizeLegibility;
+					-webkit-font-smoothing: antialiased;
+				}
+			`, "epub-plus-highlights");
 		});
 	}
 
@@ -237,10 +261,12 @@ export class EpubRenderer {
 	}
 
 	private getContainerSize(): { width: number; height: number } {
-		const rect = this.containerEl.getBoundingClientRect();
+		const w = this.containerEl.clientWidth;
+		const h = this.containerEl.clientHeight;
+		const margin = (this.settings.marginSize ?? 40) * 2;
 		return {
-			width: Math.floor(rect.width) || 600,
-			height: Math.floor(rect.height) || 400,
+			width: Math.floor(Math.max(w - margin, 200)) || 600,
+			height: Math.floor(h) || 400,
 		};
 	}
 
@@ -249,10 +275,14 @@ export class EpubRenderer {
 	}
 
 	private handleResize(): void {
-		if (!this.rendition) return;
-		const { width, height } = this.getContainerSize();
-		if (width > 0 && height > 0) {
-			this.rendition.resize(width, height);
+		try {
+			if (!this.rendition) return;
+			const { width, height } = this.getContainerSize();
+			if (width > 0 && height > 0) {
+				this.rendition.resize(width, height);
+			}
+		} catch (e) {
+			console.debug("[EPUB++] handleResize failed:", e);
 		}
 	}
 

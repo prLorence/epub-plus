@@ -19,14 +19,18 @@ export function showHighlightPopover(
 
 	if (backlinks.length === 1) {
 		const bl = backlinks[0]!;
-		app.workspace.trigger("hover-link", {
-			event,
-			source: "epub-plus",
-			hoverParent,
-			targetEl,
-			linktext: bl.sourcePath,
-			sourcePath: "",
-		});
+		try {
+			app.workspace.trigger("hover-link", {
+				event,
+				source: "epub-plus",
+				hoverParent,
+				targetEl,
+				linktext: bl.sourcePath,
+				sourcePath: "",
+			});
+		} catch {
+			// hover-link is a semi-public event — degrade gracefully
+		}
 	} else {
 		showMultiBacklinkPopover(app, backlinks, targetEl);
 	}

@@ -81,9 +81,22 @@ export class BacklinkPanel {
 		const header = this.containerEl.createDiv({
 			cls: "epub-plus-bl-header",
 		});
-		header.createEl("span", { text: "Backlinks" });
 
-		const filterBtn = header.createEl("button", {
+		const headerLeft = header.createDiv({
+			cls: "epub-plus-bl-header-left",
+		});
+		headerLeft.createEl("span", { text: "Backlinks" });
+
+		const filtered = this.getFilteredBacklinks();
+		headerLeft.createEl("span", {
+			cls: "epub-plus-bl-count",
+			text: String(filtered.length),
+		});
+
+		const headerRight = header.createDiv({
+			cls: "epub-plus-bl-header-right",
+		});
+		const filterBtn = headerRight.createEl("button", {
 			cls: `epub-plus-bl-filter-btn ${this.filterByChapter ? "is-active" : ""}`,
 			title: "Filter by current chapter",
 			text: "\u2261",
@@ -93,17 +106,11 @@ export class BacklinkPanel {
 			this.render();
 		});
 
-		const closeBtn = header.createEl("button", {
+		const closeBtn = headerRight.createEl("button", {
 			cls: "epub-plus-bl-close",
 			text: "\u00d7",
 		});
 		closeBtn.addEventListener("click", () => this.hide());
-
-		const filtered = this.getFilteredBacklinks();
-		header.createEl("span", {
-			cls: "epub-plus-bl-count",
-			text: `${String(filtered.length)}`,
-		});
 
 		if (filtered.length === 0) {
 			this.containerEl.createDiv({

@@ -5,6 +5,7 @@ import type { ReadingProgress, ReadingStateMap } from "../types";
 export class ProgressStore {
 	private state: ReadingStateMap = {};
 	private dirty = false;
+	private saving = false;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private vault: Vault) {}
@@ -22,20 +23,34 @@ export class ProgressStore {
 	}
 
 	async save(): Promise<void> {
-		if (!this.dirty) return;
+		if (!this.dirty || this.saving) return;
+		this.saving = true;
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
 			this.saveTimer = null;
 		}
 
 		const data = JSON.stringify(this.state, null, 2);
-		const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
-		if (file instanceof TFile) {
-			await this.vault.modify(file, data);
-		} else {
-			await this.vault.create(READING_STATE_FILE, data);
+		try {
+			const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
+			if (file instanceof TFile) {
+				await this.vault.modify(file, data);
+			} else {
+				await this.vault.create(READING_STATE_FILE, data);
+			}
+		} catch {
+			// File may have been created by another instance, retry as modify
+			try {
+				const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
+				if (file instanceof TFile) {
+					await this.vault.modify(file, data);
+				}
+			} catch {
+				// Give up silently
+			}
 		}
 		this.dirty = false;
+		this.saving = false;
 	}
 
 	scheduleSave(): void {
