@@ -59,6 +59,7 @@ export default class EpubPlusPlugin extends Plugin {
 		this.unpatchOpenLinkText();
 		void this.progressStore.save();
 		void this.textCache.save();
+		this.textCache.destroyPool();
 	}
 
 	async saveSettings(): Promise<void> {

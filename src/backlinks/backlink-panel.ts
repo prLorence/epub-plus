@@ -12,31 +12,42 @@ export class BacklinkPanel {
 	private currentChapterName = "";
 	private filterByChapter = false;
 	private hoveredEntry: HTMLElement | null = null;
+	private entryMap = new Map<string, HTMLElement>();
+	private countEl: HTMLElement | null = null;
+	private listEl: HTMLElement | null = null;
+	private emptyEl: HTMLElement | null = null;
+	private filterBtn: HTMLElement | null = null;
 
 	constructor(
 		private app: App,
 		private containerEl: HTMLElement,
 		private callbacks: BacklinkPanelCallbacks,
 	) {
-		this.render();
+		this.renderStructure();
 	}
 
 	setBacklinks(backlinks: EpubBacklink[]): void {
 		this.backlinks = backlinks;
-		this.render();
+		this.rebuildList();
 	}
 
 	setCurrentChapter(href: string, chapterName?: string): void {
+		if (
+			this.currentHref === href &&
+			this.currentChapterName === (chapterName ?? "")
+		) {
+			return;
+		}
 		this.currentHref = href;
 		this.currentChapterName = chapterName ?? "";
 		if (this.filterByChapter) {
-			this.render();
+			this.updateVisibility();
 		}
 	}
 
 	setFilterByChapter(filter: boolean): void {
 		this.filterByChapter = filter;
-		this.render();
+		this.updateVisibility();
 	}
 
 	show(): void {
@@ -53,20 +64,12 @@ export class BacklinkPanel {
 
 	highlightEntry(sourcePath: string, line: number): void {
 		this.clearHighlight();
-		const entries = this.containerEl.querySelectorAll(
-			".epub-plus-bl-entry",
-		);
-		for (const el of Array.from(entries)) {
-			const htmlEl = el as HTMLElement;
-			if (
-				htmlEl.dataset["source"] === sourcePath &&
-				htmlEl.dataset["line"] === String(line)
-			) {
-				htmlEl.classList.add("is-hover");
-				htmlEl.scrollIntoView({ block: "nearest" });
-				this.hoveredEntry = htmlEl;
-				break;
-			}
+		const key = `${sourcePath}:${line}`;
+		const el = this.entryMap.get(key);
+		if (el) {
+			el.classList.add("is-hover");
+			el.scrollIntoView({ block: "nearest" });
+			this.hoveredEntry = el;
 		}
 	}
 
@@ -77,7 +80,11 @@ export class BacklinkPanel {
 		}
 	}
 
-	private render(): void {
+	/**
+	 * Build the static shell (header, filter button, list container).
+	 * Called once in constructor.
+	 */
+	private renderStructure(): void {
 		this.containerEl.empty();
 
 		const header = this.containerEl.createDiv({
@@ -89,23 +96,26 @@ export class BacklinkPanel {
 		});
 		headerLeft.createEl("span", { text: "Backlinks" });
 
-		const filtered = this.getFilteredBacklinks();
-		headerLeft.createEl("span", {
+		this.countEl = headerLeft.createEl("span", {
 			cls: "epub-plus-bl-count",
-			text: String(filtered.length),
+			text: "0",
 		});
 
 		const headerRight = header.createDiv({
 			cls: "epub-plus-bl-header-right",
 		});
-		const filterBtn = headerRight.createEl("button", {
-			cls: `epub-plus-bl-filter-btn ${this.filterByChapter ? "is-active" : ""}`,
+		this.filterBtn = headerRight.createEl("button", {
+			cls: "epub-plus-bl-filter-btn",
 			title: "Filter by current chapter",
 			text: "\u2261",
 		});
-		filterBtn.addEventListener("click", () => {
+		this.filterBtn.addEventListener("click", () => {
 			this.filterByChapter = !this.filterByChapter;
-			this.render();
+			this.filterBtn?.classList.toggle(
+				"is-active",
+				this.filterByChapter,
+			);
+			this.updateVisibility();
 		});
 
 		const closeBtn = headerRight.createEl("button", {
@@ -114,30 +124,97 @@ export class BacklinkPanel {
 		});
 		closeBtn.addEventListener("click", () => this.hide());
 
-		if (filtered.length === 0) {
-			this.containerEl.createDiv({
-				cls: "epub-plus-bl-empty",
-				text: "No backlinks found.",
-			});
-			return;
-		}
+		this.emptyEl = this.containerEl.createDiv({
+			cls: "epub-plus-bl-empty",
+			text: "No backlinks found.",
+		});
 
-		// Group by chapter
-		const groups = this.groupByChapter(filtered);
-		const list = this.containerEl.createDiv({
+		this.listEl = this.containerEl.createDiv({
 			cls: "epub-plus-bl-list",
 		});
+	}
+
+	/**
+	 * Rebuild entries in the list when backlinks data changes.
+	 */
+	private rebuildList(): void {
+		if (!this.listEl) return;
+		this.listEl.empty();
+		this.entryMap.clear();
+
+		const groups = this.groupByChapter(this.backlinks);
 
 		for (const [chapter, bls] of groups) {
 			if (groups.size > 1) {
-				list.createDiv({
+				this.listEl.createDiv({
 					cls: "epub-plus-bl-chapter-header",
 					text: chapter || "Unknown chapter",
 				});
 			}
 
 			for (const bl of bls) {
-				this.renderEntry(list, bl);
+				this.renderEntry(this.listEl, bl);
+			}
+		}
+
+		this.updateVisibility();
+	}
+
+	/**
+	 * Show/hide entries based on chapter filter. No DOM rebuild.
+	 */
+	private updateVisibility(): void {
+		const filtered = this.getFilteredBacklinks();
+		const visibleKeys = new Set(
+			filtered.map(
+				(bl) => `${bl.sourcePath}:${bl.position.line}`,
+			),
+		);
+
+		for (const [key, el] of this.entryMap) {
+			el.style.display = visibleKeys.has(key) ? "" : "none";
+		}
+
+		// Update count
+		if (this.countEl) {
+			this.countEl.textContent = String(filtered.length);
+		}
+
+		// Show/hide empty message and list
+		const hasVisible = filtered.length > 0;
+		if (this.emptyEl) {
+			this.emptyEl.style.display = hasVisible ? "none" : "";
+		}
+		if (this.listEl) {
+			this.listEl.style.display = hasVisible ? "" : "none";
+		}
+
+		// Also hide chapter headers if all their entries are hidden
+		if (this.listEl) {
+			const headers = this.listEl.querySelectorAll(
+				".epub-plus-bl-chapter-header",
+			);
+			for (let i = 0; i < headers.length; i++) {
+				const header = headers[i]!;
+				let next = header.nextElementSibling;
+				let anyVisible = false;
+				while (
+					next &&
+					!next.classList.contains(
+						"epub-plus-bl-chapter-header",
+					)
+				) {
+					if (
+						(next as HTMLElement).style.display !== "none"
+					) {
+						anyVisible = true;
+						break;
+					}
+					next = next.nextElementSibling;
+				}
+				(header as HTMLElement).style.display = anyVisible
+					? ""
+					: "none";
 			}
 		}
 	}
@@ -146,6 +223,9 @@ export class BacklinkPanel {
 		const entry = parent.createDiv({ cls: "epub-plus-bl-entry" });
 		entry.dataset["source"] = bl.sourcePath;
 		entry.dataset["line"] = String(bl.position.line);
+
+		const key = `${bl.sourcePath}:${bl.position.line}`;
+		this.entryMap.set(key, entry);
 
 		const dot = entry.createEl("span", {
 			cls: "epub-plus-backlink-color-dot",
@@ -184,11 +264,9 @@ export class BacklinkPanel {
 
 		const current = this.currentChapterName.toLowerCase();
 		return this.backlinks.filter((bl) => {
-			// Match by chapter name if available
 			if (bl.chapter) {
 				return bl.chapter.toLowerCase() === current;
 			}
-			// No chapter info — can't filter, include it
 			return false;
 		});
 	}
@@ -210,7 +288,6 @@ export class BacklinkPanel {
 	}
 
 	private colorNameToHex(name: string): string {
-		// Simple mapping — could be moved to a shared utility
 		const colors: Record<string, string> = {
 			yellow: "#ffd400",
 			red: "#ff6b6b",

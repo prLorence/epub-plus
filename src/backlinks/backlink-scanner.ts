@@ -104,7 +104,8 @@ export function scanBacklinksForEpub(
 
 /**
  * Watch for MetadataCache changes and re-scan backlinks when relevant.
- * Returns EventRef handles for cleanup.
+ * Uses a dirty-flag approach: only rescan on `resolved` if a relevant
+ * `changed` event fired first, avoiding redundant full-vault scans.
  */
 export function watchBacklinks(
 	app: App,
@@ -112,8 +113,11 @@ export function watchBacklinks(
 	defaultColor: string,
 	onChange: (backlinks: EpubBacklink[]) => void,
 ): EventRef[] {
+	let dirty = false;
+
 	const rescan = debounce(
 		() => {
+			dirty = false;
 			const backlinks = scanBacklinksForEpub(
 				app,
 				epubPath,
@@ -121,24 +125,33 @@ export function watchBacklinks(
 			);
 			onChange(backlinks);
 		},
-		300,
+		500,
 		true,
 	);
 
-	// Only rescan when a changed file contains links to our epub
-	const epubBasename = epubPath.split("/").pop()?.replace(/\.epub$/, "") ?? "";
+	const epubBasename =
+		epubPath.split("/").pop()?.replace(/\.epub$/, "") ?? "";
 
-	const changedRef = app.metadataCache.on("changed", (file, _data, cache) => {
-		// Quick check: does this file's links mention the epub filename?
-		if (!cache?.links) return;
-		const hasEpubLink = cache.links.some((l) => l.link.contains(epubBasename));
-		if (hasEpubLink) {
+	// Mark dirty when a file with epub links changes
+	const changedRef = app.metadataCache.on(
+		"changed",
+		(file, _data, cache) => {
+			if (!cache?.links) return;
+			const hasEpubLink = cache.links.some((l) =>
+				l.link.contains(epubBasename),
+			);
+			if (hasEpubLink) {
+				dirty = true;
+				rescan();
+			}
+		},
+	);
+
+	// Only rescan on `resolved` if a relevant change was detected
+	const resolvedRef = app.metadataCache.on("resolved", () => {
+		if (dirty) {
 			rescan();
 		}
-	});
-
-	const resolvedRef = app.metadataCache.on("resolved", () => {
-		rescan();
 	});
 
 	return [changedRef, resolvedRef];

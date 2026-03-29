@@ -95,3 +95,7 @@ Run after any major Obsidian update:
 ## Renderer Abstraction Plan
 
 See [renderer-abstraction-plan.md](renderer-abstraction-plan.md) for the full strategy pattern design to support multiple rendering engines (epub.js, Readium).
+
+## Optimization Plan
+
+See [optimization-plan.md](optimization-plan.md) for 9 identified optimizations grouped by impact (high/medium/low) with file references and fix strategies.
