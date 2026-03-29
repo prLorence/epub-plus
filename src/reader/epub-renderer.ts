@@ -127,9 +127,15 @@ export class EpubRenderer {
 		}
 
 		if (!this.locationsGenerated && this.book) {
-			void this.book.locations.generate(1024).then(() => {
-				this.locationsGenerated = true;
-			});
+			void this.book.locations
+				.generate(1024)
+				.then(() => {
+					this.locationsGenerated = true;
+				})
+				.catch(() => {
+					// Some EPUBs have broken spine/content that prevents
+					// location generation — percentage progress won't work
+				});
 		}
 	}
 

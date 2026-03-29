@@ -16,15 +16,23 @@ export class ProgressStore {
 			try {
 				const raw = await this.vault.read(file);
 				this.state = JSON.parse(raw) as ReadingStateMap;
+				console.debug("[EPUB++] ProgressStore loaded:", Object.keys(this.state).length, "entries");
+				for (const [path, progress] of Object.entries(this.state)) {
+					console.debug("[EPUB++]   ", path, "→", progress.percent + "%", progress.cfi);
+				}
 			} catch {
 				this.state = {};
+				console.debug("[EPUB++] ProgressStore: failed to parse, starting empty");
 			}
+		} else {
+			console.debug("[EPUB++] ProgressStore: no state file found");
 		}
 	}
 
 	async save(): Promise<void> {
 		if (!this.dirty || this.saving) return;
 		this.saving = true;
+		console.debug("[EPUB++] ProgressStore saving...");
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
 			this.saveTimer = null;

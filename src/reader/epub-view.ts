@@ -210,16 +210,11 @@ export class EpubView extends FileView {
 		this.hideLoading();
 
 		// Fix blank page: after the DOM is fully laid out, resize and
-		// re-display at the current location. This handles the case where
-		// the initial display() ran before the container had its final dimensions.
+		// re-display at the saved position.
 		setTimeout(() => {
 			if (!this.renderer) return;
 			this.renderer.forceResize();
-			// Use the current location from the rendition (set by the initial display)
-			// rather than a stale target, to preserve reading position
-			const currentCfi =
-				this.renderer.getRendition()?.location?.start?.cfi;
-			void this.renderer.display(currentCfi ?? startCfi ?? undefined);
+			void this.renderer.display(startCfi ?? undefined);
 		}, 500);
 
 		// Vim keybindings
@@ -459,12 +454,21 @@ export class EpubView extends FileView {
 			chapterName,
 		);
 
-		if (this.file && this.plugin.settings.autoSaveProgress) {
+		// Save progress — skip cover page (0%) to avoid overwriting
+		// a real saved position during the initial load sequence
+		const autoSave = this.plugin.settings.autoSaveProgress ?? true;
+		const progressPercent = Math.round(
+			(location.start.percentage ?? 0) * 100,
+		);
+		if (this.file && autoSave && progressPercent > 0) {
+			console.debug(
+				"[EPUB++] Saving progress:",
+				progressPercent + "%",
+				location.start.cfi,
+			);
 			this.plugin.progressStore.set(this.file.path, {
 				cfi: location.start.cfi,
-				percent: Math.round(
-					(location.start.percentage ?? 0) * 100,
-				),
+				percent: progressPercent,
 				updated: new Date().toISOString(),
 			});
 			this.plugin.progressStore.scheduleSave();
@@ -601,6 +605,7 @@ export class EpubView extends FileView {
 
 	private getSavedCfi(file: TFile): string | null {
 		const progress = this.plugin.progressStore.get(file.path);
+		console.debug("[EPUB++] getSavedCfi:", file.path, "→", progress?.cfi ?? "none", progress?.percent ?? 0, "%");
 		return progress?.cfi ?? null;
 	}
 
