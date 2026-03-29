@@ -210,6 +210,10 @@ export class EpubRenderer {
 		);
 	}
 
+	areLocationsReady(): boolean {
+		return this.locationsGenerated;
+	}
+
 	applyTheme(): void {
 		if (!this.rendition) return;
 		const theme = this.resolveTheme();

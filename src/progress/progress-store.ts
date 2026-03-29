@@ -1,4 +1,4 @@
-import { TFile, Vault } from "obsidian";
+import { Vault } from "obsidian";
 import { READING_STATE_FILE } from "../constants";
 import type { ReadingProgress, ReadingStateMap } from "../types";
 
@@ -11,28 +11,24 @@ export class ProgressStore {
 	constructor(private vault: Vault) {}
 
 	async load(): Promise<void> {
-		const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
-		if (file instanceof TFile) {
-			try {
-				const raw = await this.vault.read(file);
+		const adapter = this.vault.adapter;
+		try {
+			if (await adapter.exists(READING_STATE_FILE)) {
+				const raw = await adapter.read(READING_STATE_FILE);
 				this.state = JSON.parse(raw) as ReadingStateMap;
 				console.debug("[EPUB++] ProgressStore loaded:", Object.keys(this.state).length, "entries");
-				for (const [path, progress] of Object.entries(this.state)) {
-					console.debug("[EPUB++]   ", path, "→", progress.percent + "%", progress.cfi);
-				}
-			} catch {
-				this.state = {};
-				console.debug("[EPUB++] ProgressStore: failed to parse, starting empty");
+			} else {
+				console.debug("[EPUB++] ProgressStore: no state file found");
 			}
-		} else {
-			console.debug("[EPUB++] ProgressStore: no state file found");
+		} catch (e) {
+			this.state = {};
+			console.warn("[EPUB++] ProgressStore: failed to load:", e);
 		}
 	}
 
 	async save(): Promise<void> {
 		if (!this.dirty || this.saving) return;
 		this.saving = true;
-		console.debug("[EPUB++] ProgressStore saving...");
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
 			this.saveTimer = null;
@@ -40,22 +36,10 @@ export class ProgressStore {
 
 		const data = JSON.stringify(this.state, null, 2);
 		try {
-			const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
-			if (file instanceof TFile) {
-				await this.vault.modify(file, data);
-			} else {
-				await this.vault.create(READING_STATE_FILE, data);
-			}
-		} catch {
-			// File may have been created by another instance, retry as modify
-			try {
-				const file = this.vault.getAbstractFileByPath(READING_STATE_FILE);
-				if (file instanceof TFile) {
-					await this.vault.modify(file, data);
-				}
-			} catch {
-				// Give up silently
-			}
+			await this.vault.adapter.write(READING_STATE_FILE, data);
+			console.debug("[EPUB++] ProgressStore saved to disk");
+		} catch (e) {
+			console.error("[EPUB++] ProgressStore: failed to save:", e);
 		}
 		this.dirty = false;
 		this.saving = false;

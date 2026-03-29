@@ -18,6 +18,7 @@ export interface EpubPlusSettings {
 	theme: "auto" | "light" | "dark" | "sepia";
 	showTocOnOpen: boolean;
 	autoSaveProgress: boolean;
+	progressSyncPages: number;
 
 	// Backlink highlighting
 	enableBacklinkHighlighting: boolean;
@@ -60,6 +61,7 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	theme: "auto",
 	showTocOnOpen: false,
 	autoSaveProgress: true,
+	progressSyncPages: 5,
 
 	enableBacklinkHighlighting: true,
 	highlightOpacity: 0.3,
@@ -491,5 +493,32 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(containerEl)
+			.setName("Sync every N pages")
+			.setDesc(
+				"Write progress to disk every N page turns. Lower values save more often but increase disk writes.",
+			)
+			.addText((t) =>
+				t
+					.setValue(
+						String(this.plugin.settings.progressSyncPages),
+					)
+					.onChange(async (v) => {
+						const n = parseInt(v, 10);
+						if (!isNaN(n) && n >= 1) {
+							this.plugin.settings.progressSyncPages = n;
+							await this.plugin.saveSettings();
+						}
+					}),
+			)
+			.then((s) => {
+				const input = s.controlEl.querySelector("input");
+				if (input) {
+					input.type = "number";
+					input.min = "1";
+					input.style.width = "60px";
+				}
+			});
 	}
 }

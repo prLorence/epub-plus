@@ -41,6 +41,7 @@ export class EpubView extends FileView {
 	private renditionEl: HTMLElement | null = null;
 	private loadingEl: HTMLElement | null = null;
 	private vimBindings: VimBindings | null = null;
+	private pageTurnsSinceSave = 0;
 	private pendingSelection: {
 		cfiRange: string;
 		text: string;
@@ -71,7 +72,8 @@ export class EpubView extends FileView {
 		});
 		this.scope.register([], "Escape", () => {
 			this.pendingSelection = null;
-			return false;
+			// Don't consume the event — let Obsidian handle Escape too
+			return true;
 		});
 
 		// Number keys 1-9 for quick color selection
@@ -415,23 +417,30 @@ export class EpubView extends FileView {
 	}
 
 	private handleRelocated(location: Location): void {
+		const locationsReady =
+			this.renderer?.areLocationsReady() ?? false;
+		const bookPercent = locationsReady
+			? this.renderer!.getPercentage()
+			: 0;
+
 		if (this.toolbar && this.renderer) {
-			this.toolbar.updateProgress(this.renderer.getPercentage());
+			this.toolbar.updateProgress(bookPercent);
 			this.toolbar.updateChapter(
 				this.renderer.getCurrentChapterTitle(),
 			);
 		}
 
-		// Update progress bar and page counter
-		const percent = Math.round(
-			(location.start.percentage ?? 0) * 100,
-		);
+		// Update progress bar (book-level)
 		const fill = this.containerEl_?.querySelector(
 			".epub-plus-progress-fill",
 		) as HTMLElement | null;
 		if (fill) {
-			fill.setCssProps({ "--progress": `${String(percent)}%` });
+			fill.setCssProps({
+				"--progress": `${String(bookPercent)}%`,
+			});
 		}
+
+		// Update page counter (chapter-level pages)
 		const pageInfo = this.containerEl_?.querySelector(
 			".epub-plus-page-info",
 		) as HTMLElement | null;
@@ -454,24 +463,34 @@ export class EpubView extends FileView {
 			chapterName,
 		);
 
-		// Save progress — skip cover page (0%) to avoid overwriting
-		// a real saved position during the initial load sequence
+		// Save reading progress — skip until locations are generated
+		// to avoid overwriting accurate saved data with 0%
 		const autoSave = this.plugin.settings.autoSaveProgress ?? true;
-		const progressPercent = Math.round(
-			(location.start.percentage ?? 0) * 100,
-		);
-		if (this.file && autoSave && progressPercent > 0) {
-			console.debug(
-				"[EPUB++] Saving progress:",
-				progressPercent + "%",
-				location.start.cfi,
-			);
+		if (
+			this.file &&
+			autoSave &&
+			locationsReady &&
+			location.start.cfi
+		) {
 			this.plugin.progressStore.set(this.file.path, {
 				cfi: location.start.cfi,
-				percent: progressPercent,
+				percent: bookPercent,
 				updated: new Date().toISOString(),
 			});
-			this.plugin.progressStore.scheduleSave();
+
+			// Only write to disk every N page turns
+			this.pageTurnsSinceSave++;
+			const syncInterval =
+				this.plugin.settings.progressSyncPages ?? 5;
+			if (this.pageTurnsSinceSave >= syncInterval) {
+				this.pageTurnsSinceSave = 0;
+				console.debug(
+					"[EPUB++] Syncing progress to disk:",
+					bookPercent + "%",
+					location.start.cfi,
+				);
+				this.plugin.progressStore.scheduleSave();
+			}
 		}
 	}
 
