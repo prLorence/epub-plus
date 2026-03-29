@@ -5,6 +5,7 @@ export interface EpubRendererCallbacks {
 	onRelocated: (location: Location) => void;
 	onSelected: (cfiRange: string, contents: Contents) => void;
 	onRendered?: () => void;
+	onFocused?: () => void;
 }
 
 export class EpubRenderer {
@@ -74,6 +75,9 @@ export class EpubRenderer {
 		// Forward keyboard events from the EPUB iframe to the parent document
 		// so Obsidian's Scope system can capture them (iframe events don't bubble up)
 		this.rendition.on("keydown", (e: KeyboardEvent) => {
+			// First ensure our leaf is active (click inside iframe doesn't
+			// trigger Obsidian's leaf activation)
+			this.callbacks.onFocused?.();
 			document.dispatchEvent(
 				new KeyboardEvent("keydown", {
 					key: e.key,
@@ -84,6 +88,12 @@ export class EpubRenderer {
 					altKey: e.altKey,
 				}),
 			);
+		});
+
+		// When the EPUB iframe is clicked, activate our leaf so the Scope
+		// becomes active and keyboard shortcuts work
+		this.rendition.on("click", () => {
+			this.callbacks.onFocused?.();
 		});
 
 		this.resizeObserver = new ResizeObserver(() => {

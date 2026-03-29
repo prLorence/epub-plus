@@ -157,6 +157,11 @@ export class EpubView extends FileView {
 				onSelected: (cfiRange: string, contents: Contents) =>
 					this.handleSelected(cfiRange, contents),
 				onRendered: () => this.handleRendered(),
+				onFocused: () => {
+					this.app.workspace.setActiveLeaf(this.leaf, {
+						focus: false,
+					});
+				},
 			},
 		);
 
