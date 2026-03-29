@@ -1,90 +1,120 @@
-# Obsidian Sample Plugin
+# EPUB++
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Read EPUB files in Obsidian with deep linking, backlink highlights, and CFI-based annotations.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Desktop only. Requires Obsidian 1.12.7+.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Features
 
-## First time developing plugins?
+### Reader
 
-Quick starting guide for new plugin devs:
+- **Paginated or scrolled** reading modes
+- **Customizable display**: font size, font family, line height, margins
+- **Themes**: match Obsidian, light, dark, or sepia
+- **Table of contents** panel with active chapter tracking
+- **Vim keybindings** (optional): `j`/`k`, `h`/`l`, `g`/`G` for navigation
+- **Reading progress**: auto-saved per book, syncs to disk every N page turns (configurable)
+- **Continue reading** command to resume your most recent book
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+### Deep linking
 
-## Releasing new releases
+Select text in the reader and pick a color to create a CFI-based link:
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
-
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
-
-## Adding your plugin to the community plugin list
-
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```
+[[book.epub#cfi=/6/14!/4/2/1:0&end=/6/14!/4/2/1:42&color=yellow&chapter=Chapter+1&text=selected+text]]
 ```
 
-If you have multiple URLs, you can also do:
+Links can be copied to clipboard or inserted directly into the active note (at cursor or appended).
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+### Backlink highlights
+
+Links from your notes back to an EPUB are rendered as colored highlights in the reader. The backlink panel groups them by chapter with hover sync between the panel and the reader.
+
+### Embeds
+
+Embed highlighted passages as styled blockquotes in your notes:
+
+```
+![[book.epub#cfi=/6/14!/4/2/1:0&end=/6/14!/4/2/1:42&color=yellow&chapter=Chapter 1]]
 ```
 
-## API Documentation
+Text is resolved from the EPUB and cached for fast rendering.
 
-See https://docs.obsidian.md
+### Copy templates
+
+Customize how links are formatted with template variables:
+
+| Variable | Description |
+|---|---|
+| `{{fileName}}` | EPUB filename without extension |
+| `{{title}}` | Book title from metadata |
+| `{{author}}` | Book author from metadata |
+| `{{chapter}}` | Current chapter name |
+| `{{selection}}` | Selected text |
+| `{{linkedSelection}}` | Selected text as a wikilink |
+| `{{link}}` | Short display alias link |
+| `{{rawLink}}` | Plain wikilink without alias |
+| `{{color}}` | Highlight color name |
+
+Default template:
+
+```
+> [!quote|{{color}}] {{chapter}}
+> {{linkedSelection}}
+```
+
+Multiple templates can be saved and switched between.
+
+### Color palette
+
+Seven default colors (yellow, red, green, blue, purple, pink, orange) with full customization: add, rename, change hex values, or delete. Use number keys 1-9 to quickly apply colors to a selection.
+
+## Installation
+
+### From community plugins
+
+Search for **EPUB++** in Obsidian's community plugin browser.
+
+### Manual
+
+Copy `main.js`, `styles.css`, and `manifest.json` into your vault at:
+
+```
+<vault>/.obsidian/plugins/epub-plus/
+```
+
+## Settings
+
+| Section | Setting | Default |
+|---|---|---|
+| Reader | Reading mode | Paginated |
+| Reader | Font size | 18px |
+| Reader | Line height | 1.6 |
+| Reader | Margin | 40px |
+| Reader | Theme | Match Obsidian |
+| Reader | Show TOC on open | Off |
+| Backlinks | Enable highlighting | On |
+| Backlinks | Highlight opacity | 0.3 |
+| Backlinks | Show backlink panel | Off |
+| Backlinks | Filter by chapter | Off |
+| Copy | Default highlight color | Yellow |
+| Copy | Auto-copy on highlight | Off |
+| Copy | Add to note mode | Append |
+| Hover | Hover action | Show preview |
+| Hover | Hover sync | Both directions |
+| Keyboard | Vim keybindings | Off |
+| Progress | Auto-save progress | On |
+| Progress | Sync every n pages | 5 |
+
+## Development
+
+```bash
+npm install
+npm run dev     # watch mode
+npm run build   # production build
+npm run lint    # eslint
+```
+
+## License
+
+0-BSD
