@@ -23,32 +23,32 @@ All consumer code (`epub-view.ts`, `highlight-manager.ts`, `vim-bindings.ts`, et
 
 ```ts
 interface IBookEngine {
-  open(data: ArrayBuffer): Promise<void>;
-  renderTo(el: HTMLElement, options: RenderOptions): IRendition;
-  getToc(): Promise<TocItem[]>;
-  getMetadata(): Promise<BookMetadata>;
-  getRange(cfiRange: string): Promise<Range | null>;
-  destroy(): void;
+	open(data: ArrayBuffer): Promise<void>;
+	renderTo(el: HTMLElement, options: RenderOptions): IRendition;
+	getToc(): Promise<TocItem[]>;
+	getMetadata(): Promise<BookMetadata>;
+	getRange(cfiRange: string): Promise<Range | null>;
+	destroy(): void;
 }
 
 interface RenderOptions {
-  width: number;
-  height: number;
-  spread: "none" | "auto";
-  flow: "paginated" | "scrolled";
+	width: number;
+	height: number;
+	spread: "none" | "auto";
+	flow: "paginated" | "scrolled";
 }
 
 interface TocItem {
-  id: string;
-  href: string;
-  label: string;
-  children: TocItem[];
+	id: string;
+	href: string;
+	label: string;
+	children: TocItem[];
 }
 
 interface BookMetadata {
-  title: string;
-  author: string;
-  language?: string;
+	title: string;
+	author: string;
+	language?: string;
 }
 ```
 
@@ -56,47 +56,55 @@ interface BookMetadata {
 
 ```ts
 interface IRendition {
-  display(target?: string): Promise<void>;
-  next(): Promise<void>;
-  prev(): Promise<void>;
-  resize(width: number, height: number): void;
-  destroy(): void;
+	display(target?: string): Promise<void>;
+	next(): Promise<void>;
+	prev(): Promise<void>;
+	resize(width: number, height: number): void;
+	destroy(): void;
 
-  // Themes & styling
-  setBodyStyles(styles: Record<string, string>): void;
-  injectStylesheet(css: string, key: string): void;
+	// Themes & styling
+	setBodyStyles(styles: Record<string, string>): void;
+	injectStylesheet(css: string, key: string): void;
 
-  // Annotations
-  addHighlight(cfiRange: string, data: unknown, color: string, opacity: number,
-    onClick?: (e: MouseEvent) => void): void;
-  removeHighlight(cfiRange: string): void;
-  clearHighlights(): void;
+	// Annotations
+	addHighlight(
+		cfiRange: string,
+		data: unknown,
+		color: string,
+		opacity: number,
+		onClick?: (e: MouseEvent) => void,
+	): void;
+	removeHighlight(cfiRange: string): void;
+	clearHighlights(): void;
 
-  // State
-  getCurrentLocation(): ReaderLocation | null;
-  getSpineEnd(): string | null;  // href of last spine item
+	// State
+	getCurrentLocation(): ReaderLocation | null;
+	getSpineEnd(): string | null; // href of last spine item
 
-  // Events
-  on(event: "relocated", cb: (location: ReaderLocation) => void): void;
-  on(event: "selected", cb: (cfiRange: string, selection: SelectionInfo) => void): void;
-  on(event: "rendered", cb: () => void): void;
-  on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
-  off(event: string, cb: unknown): void;
+	// Events
+	on(event: "relocated", cb: (location: ReaderLocation) => void): void;
+	on(
+		event: "selected",
+		cb: (cfiRange: string, selection: SelectionInfo) => void,
+	): void;
+	on(event: "rendered", cb: () => void): void;
+	on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
+	off(event: string, cb: unknown): void;
 }
 
 interface ReaderLocation {
-  cfi: string;
-  href: string;
-  percentage: number;
-  page: number;
-  totalPages: number;
+	cfi: string;
+	href: string;
+	percentage: number;
+	page: number;
+	totalPages: number;
 }
 
 interface SelectionInfo {
-  text: string;
-  window: Window;
-  document: Document;
-  clearSelection(): void;
+	text: string;
+	window: Window;
+	document: Document;
+	clearSelection(): void;
 }
 ```
 
@@ -104,28 +112,32 @@ interface SelectionInfo {
 
 ```ts
 interface ITextResolver {
-  resolve(data: ArrayBuffer, cfiRange: string): Promise<string | null>;
+	resolve(data: ArrayBuffer, cfiRange: string): Promise<string | null>;
 }
 ```
 
 ## Migration Steps
 
 ### Step 1: Create interfaces (`engine/types.ts`)
+
 Define all interfaces above. No implementation changes yet.
 
 ### Step 2: Create epub.js adapter (`engine/epubjs-engine.ts`)
+
 Wrap existing epub.js code to implement `IBookEngine` and `IRendition`.
 Move EPUB.js imports here — this becomes the ONLY file that imports from `epubjs`.
 
 ### Step 3: Create factory (`engine/engine-factory.ts`)
+
 ```ts
 function createEngine(type: "epubjs" | "readium"): IBookEngine {
-  if (type === "readium") return new ReadiumEngine();
-  return new EpubJsEngine();
+	if (type === "readium") return new ReadiumEngine();
+	return new EpubJsEngine();
 }
 ```
 
 ### Step 4: Update consumers
+
 - `epub-renderer.ts` → uses `IBookEngine` + `IRendition` instead of `Book` + `Rendition`
 - `highlight-manager.ts` → uses `IRendition.addHighlight/removeHighlight` instead of `rendition.annotations.*`
 - `epub-view.ts` → uses `SelectionInfo` instead of `Contents`
@@ -134,27 +146,29 @@ function createEngine(type: "epubjs" | "readium"): IBookEngine {
 - `epub-text-cache.ts` → uses `ITextResolver` instead of `ePub()` + `book.getRange()`
 
 ### Step 5: Add settings toggle
+
 ```ts
-engineType: "epubjs" | "readium";  // default: "epubjs"
+engineType: "epubjs" | "readium"; // default: "epubjs"
 ```
 
 ### Step 6: Implement Readium adapter (`engine/readium-engine.ts`)
+
 Wrap `@readium/navigator` + `@readium/shared` to implement the same interfaces.
 
 ## Files That Need Changes
 
-| File | Current EPUB.js Dependency | After Abstraction |
-|------|---------------------------|-------------------|
-| `epub-renderer.ts` | Heavy (all APIs) | Uses `IBookEngine` + `IRendition` |
-| `highlight-manager.ts` | `Rendition` type, annotations API | Uses `IRendition` |
-| `epub-view.ts` | `Location`, `Contents` types | Uses `ReaderLocation`, `SelectionInfo` |
-| `toc-panel.ts` | `NavItem` type | Uses `TocItem` |
-| `vim-bindings.ts` | `Rendition` via renderer | Uses `IRendition` |
-| `epub-text-cache.ts` | `ePub()`, `book.getRange()` | Uses `ITextResolver` |
-| `epub-link-parser.ts` | None (string utils only) | No change |
-| `link-copy.ts` | None | No change |
-| `backlink-scanner.ts` | None | No change |
-| `settings.ts` | None | Add `engineType` setting |
+| File                   | Current EPUB.js Dependency        | After Abstraction                      |
+| ---------------------- | --------------------------------- | -------------------------------------- |
+| `epub-renderer.ts`     | Heavy (all APIs)                  | Uses `IBookEngine` + `IRendition`      |
+| `highlight-manager.ts` | `Rendition` type, annotations API | Uses `IRendition`                      |
+| `epub-view.ts`         | `Location`, `Contents` types      | Uses `ReaderLocation`, `SelectionInfo` |
+| `toc-panel.ts`         | `NavItem` type                    | Uses `TocItem`                         |
+| `vim-bindings.ts`      | `Rendition` via renderer          | Uses `IRendition`                      |
+| `epub-text-cache.ts`   | `ePub()`, `book.getRange()`       | Uses `ITextResolver`                   |
+| `epub-link-parser.ts`  | None (string utils only)          | No change                              |
+| `link-copy.ts`         | None                              | No change                              |
+| `backlink-scanner.ts`  | None                              | No change                              |
+| `settings.ts`          | None                              | Add `engineType` setting               |
 
 ## Key Design Decisions
 

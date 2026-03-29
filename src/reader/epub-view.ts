@@ -448,7 +448,11 @@ export class EpubView extends FileView {
 		}
 
 		// Update backlink panel chapter filter
-		this.backlinkPanel?.setCurrentChapter(location.start.href);
+		const chapterName = this.renderer?.getCurrentChapterTitle() ?? "";
+		this.backlinkPanel?.setCurrentChapter(
+			location.start.href,
+			chapterName,
+		);
 
 		if (this.file && this.plugin.settings.autoSaveProgress) {
 			this.plugin.progressStore.set(this.file.path, {

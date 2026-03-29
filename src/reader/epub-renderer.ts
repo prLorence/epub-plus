@@ -203,48 +203,64 @@ export class EpubRenderer {
 
 	applyFontSettings(): void {
 		if (!this.rendition) return;
-		const fontSize = this.settings.fontSize;
-		const lineHeight = this.settings.lineHeight;
-		const fontFamily = this.settings.fontFamily;
-		const opacity = this.settings.highlightOpacity;
 
-		// Font size and line height are user-explicit settings — use !important
-		// so they override the book's CSS. Font family is optional — only
-		// override if the user set one.
-		const bodyStyles: Record<string, string> = {
-			"font-size": `${fontSize ?? 18}px !important`,
-			"line-height": `${lineHeight ?? 1.6} !important`,
-		};
-		if (fontFamily) {
-			bodyStyles["font-family"] = `${fontFamily} !important`;
+		// Register content hook once — injects a <style> tag into each
+		// rendered section. This is more reliable than themes.default()
+		// because it creates actual CSS rules with !important.
+		if (!this.contentHookRegistered) {
+			this.contentHookRegistered = true;
+			this.rendition.hooks.content.register(
+				(contents: Contents) => {
+					this.injectUserStyles(contents);
+				},
+			);
 		}
-		this.rendition.themes.default({ body: bodyStyles });
+	}
 
-		// Inject styles into each rendered section (only register once).
-		if (this.contentHookRegistered) return;
-		this.contentHookRegistered = true;
-		this.rendition.hooks.content.register((contents: Contents) => {
-			void contents.addStylesheetCss(`
-				.epubjs-hl {
-					fill: yellow;
-					fill-opacity: ${opacity};
-					mix-blend-mode: multiply;
-				}
-				::selection {
-					background: rgba(255,255,0, 0.3);
-				}
-				body {
-					text-rendering: optimizeLegibility;
-					-webkit-font-smoothing: antialiased;
-				}
-			`, "epub-plus-highlights");
-		});
+	private injectUserStyles(contents: Contents): void {
+		const fontSize = this.settings.fontSize ?? 18;
+		const lineHeight = this.settings.lineHeight ?? 1.6;
+		const fontFamily = this.settings.fontFamily;
+		const opacity = this.settings.highlightOpacity ?? 0.3;
+
+		const fontFamilyRule = fontFamily
+			? `font-family: ${fontFamily} !important;`
+			: "";
+
+		void contents.addStylesheetCss(`
+			body {
+				font-size: ${fontSize}px !important;
+				line-height: ${lineHeight} !important;
+				${fontFamilyRule}
+				text-rendering: optimizeLegibility;
+				-webkit-font-smoothing: antialiased;
+			}
+			.epubjs-hl {
+				fill: yellow;
+				fill-opacity: ${opacity};
+				mix-blend-mode: multiply;
+			}
+			::selection {
+				background: rgba(255,255,0, 0.3);
+			}
+		`, "epub-plus-user-styles");
 	}
 
 	updateSettings(settings: EpubPlusSettings): void {
 		this.settings = settings;
 		this.applyTheme();
 		this.applyFontSettings();
+
+		// Re-inject styles into currently rendered content
+		try {
+			const contents = this.rendition?.getContents();
+			const list = Array.isArray(contents) ? contents : [contents];
+			for (const c of list) {
+				if (c) this.injectUserStyles(c as unknown as Contents);
+			}
+		} catch {
+			// ignore
+		}
 	}
 
 	destroy(): void {

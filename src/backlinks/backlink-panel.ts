@@ -9,6 +9,7 @@ export interface BacklinkPanelCallbacks {
 export class BacklinkPanel {
 	private backlinks: EpubBacklink[] = [];
 	private currentHref = "";
+	private currentChapterName = "";
 	private filterByChapter = false;
 	private hoveredEntry: HTMLElement | null = null;
 
@@ -25,8 +26,9 @@ export class BacklinkPanel {
 		this.render();
 	}
 
-	setCurrentChapter(href: string): void {
+	setCurrentChapter(href: string, chapterName?: string): void {
 		this.currentHref = href;
+		this.currentChapterName = chapterName ?? "";
 		if (this.filterByChapter) {
 			this.render();
 		}
@@ -176,28 +178,19 @@ export class BacklinkPanel {
 	}
 
 	private getFilteredBacklinks(): EpubBacklink[] {
-		if (!this.filterByChapter || !this.currentHref) {
+		if (!this.filterByChapter || !this.currentChapterName) {
 			return this.backlinks;
 		}
 
+		const current = this.currentChapterName.toLowerCase();
 		return this.backlinks.filter((bl) => {
-			// Match CFI spine position to current chapter href
-			// CFIs start with /6/<spineIdx>! — we compare the chapter param if available
+			// Match by chapter name if available
 			if (bl.chapter) {
-				// Simple string match on chapter name
-				return true; // Show all with chapter info when filtering
+				return bl.chapter.toLowerCase() === current;
 			}
-			// Fallback: check if the CFI's spine reference matches
-			return this.cfiMatchesHref(bl.cfiStart, this.currentHref);
+			// No chapter info — can't filter, include it
+			return false;
 		});
-	}
-
-	private cfiMatchesHref(cfi: string, href: string): boolean {
-		// This is a heuristic — full CFI-to-href resolution would need the book's spine
-		// For now, we don't filter CFIs that we can't confidently match
-		void cfi;
-		void href;
-		return true;
 	}
 
 	private groupByChapter(

@@ -43,12 +43,26 @@ export function showColorPalettePopup(
 				"transition:border-color 0.15s;",
 		);
 		swatch.addEventListener("mouseenter", () => {
-			swatch.setAttribute("style",
-				swatch.getAttribute("style")!.replace("border:2px solid transparent", "border:2px solid #fff"));
+			swatch.setAttribute(
+				"style",
+				swatch
+					.getAttribute("style")!
+					.replace(
+						"border:2px solid transparent",
+						"border:2px solid #fff",
+					),
+			);
 		});
 		swatch.addEventListener("mouseleave", () => {
-			swatch.setAttribute("style",
-				swatch.getAttribute("style")!.replace("border:2px solid #fff", "border:2px solid transparent"));
+			swatch.setAttribute(
+				"style",
+				swatch
+					.getAttribute("style")!
+					.replace(
+						"border:2px solid #fff",
+						"border:2px solid transparent",
+					),
+			);
 		});
 		swatch.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -77,12 +91,20 @@ export function showColorPalettePopup(
 			"font-size:11px;padding:2px 6px;border-radius:3px;",
 	);
 	addBtn.addEventListener("mouseenter", () => {
-		addBtn.setAttribute("style",
-			addBtn.getAttribute("style")!.replace("background:none", "background:#444"));
+		addBtn.setAttribute(
+			"style",
+			addBtn
+				.getAttribute("style")!
+				.replace("background:none", "background:#444"),
+		);
 	});
 	addBtn.addEventListener("mouseleave", () => {
-		addBtn.setAttribute("style",
-			addBtn.getAttribute("style")!.replace("background:#444", "background:none"));
+		addBtn.setAttribute(
+			"style",
+			addBtn
+				.getAttribute("style")!
+				.replace("background:#444", "background:none"),
+		);
 	});
 	addBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
