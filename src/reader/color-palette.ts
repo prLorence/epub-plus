@@ -1,4 +1,3 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment -- elements are in EPUB iframe, no access to plugin CSS */
 import type { PaletteColor } from "../types";
 
 export interface PaletteCallbacks {

@@ -495,9 +495,9 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Sync every N pages")
+			.setName("Sync every n pages")
 			.setDesc(
-				"Write progress to disk every N page turns. Lower values save more often but increase disk writes.",
+				"Write progress to disk every n page turns. Lower values save more often but increase disk writes.",
 			)
 			.addText((t) =>
 				t
@@ -517,7 +517,8 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 				if (input) {
 					input.type = "number";
 					input.min = "1";
-					input.style.width = "60px";
+					// eslint-disable-next-line obsidianmd/no-static-styles-assignment -- dynamic settings input
+				input.style.width = "60px";
 				}
 			});
 	}
