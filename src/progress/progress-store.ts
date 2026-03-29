@@ -73,13 +73,14 @@ export class ProgressStore {
 	}
 
 	/**
-	 * Remove entries for files that no longer exist in the vault.
-	 * Call on plugin load after the vault file list is available.
+	 * Remove entries for files that no longer exist on disk.
+	 * Uses adapter.exists() to check each path directly,
+	 * since vault.getFiles() may not include binary files like .epub.
 	 */
-	pruneDeleted(existingPaths: Set<string>): void {
+	async pruneDeleted(adapter: { exists: (path: string) => Promise<boolean> }): Promise<void> {
 		let pruned = 0;
 		for (const path of Object.keys(this.state)) {
-			if (!existingPaths.has(path)) {
+			if (!(await adapter.exists(path))) {
 				delete this.state[path];
 				pruned++;
 			}

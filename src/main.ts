@@ -33,10 +33,11 @@ export default class EpubPlusPlugin extends Plugin {
 
 		this.progressStore = new ProgressStore(this.app.vault);
 		await this.progressStore.load();
-		const existingFiles = new Set(
-			this.app.vault.getFiles().map((f) => f.path),
-		);
-		this.progressStore.pruneDeleted(existingFiles);
+
+		// Prune stale entries after layout is ready (vault fully indexed)
+		this.app.workspace.onLayoutReady(() => {
+			void this.progressStore.pruneDeleted(this.app.vault.adapter);
+		});
 
 		this.textCache = new EpubTextCache(this.app.vault);
 		await this.textCache.load();
