@@ -3,6 +3,8 @@ import type { NavItem } from "epubjs";
 export class TocPanel {
 	private visible = false;
 	private activeHref = "";
+	private hrefMap = new Map<string, HTMLElement>();
+	private activeEl: HTMLElement | null = null;
 
 	constructor(
 		private containerEl: HTMLElement,
@@ -31,12 +33,15 @@ export class TocPanel {
 	}
 
 	setActiveHref(href: string): void {
+		if (this.activeHref === href) return;
 		this.activeHref = href;
 		this.updateActiveState();
 	}
 
 	private render(): void {
 		this.containerEl.empty();
+		this.hrefMap.clear();
+		this.activeEl = null;
 
 		const header = this.containerEl.createDiv({
 			cls: "epub-plus-toc-header",
@@ -66,11 +71,17 @@ export class TocPanel {
 				cls: "epub-plus-toc-item",
 			});
 			entry.style.paddingLeft = `${12 + depth * 16}px`;
-			entry.dataset["href"] = item.href.split("#")[0];
+			const itemHref = item.href.split("#")[0] ?? "";
+			entry.dataset["href"] = itemHref;
 			entry.createEl("span", { text: item.label.trim() });
 			entry.addEventListener("click", () => {
 				this.onNavigate(item.href);
 			});
+
+			// Index by href for O(1) lookups
+			if (itemHref) {
+				this.hrefMap.set(itemHref, entry);
+			}
 
 			if (item.subitems && item.subitems.length > 0) {
 				this.renderItems(parent, item.subitems, depth + 1);
@@ -79,18 +90,30 @@ export class TocPanel {
 	}
 
 	private updateActiveState(): void {
-		const items =
-			this.containerEl.querySelectorAll(".epub-plus-toc-item");
-		for (const el of Array.from(items)) {
-			const href = (el as HTMLElement).dataset["href"] ?? "";
-			if (
-				this.activeHref === href ||
-				this.activeHref.endsWith(href)
-			) {
-				el.classList.add("is-active");
-			} else {
-				el.classList.remove("is-active");
+		// Remove old active
+		if (this.activeEl) {
+			this.activeEl.classList.remove("is-active");
+			this.activeEl = null;
+		}
+
+		if (!this.activeHref) return;
+
+		// Try exact match first
+		let el = this.hrefMap.get(this.activeHref);
+
+		// Try suffix match if exact fails
+		if (!el) {
+			for (const [href, entry] of this.hrefMap) {
+				if (this.activeHref.endsWith(href)) {
+					el = entry;
+					break;
+				}
 			}
+		}
+
+		if (el) {
+			el.classList.add("is-active");
+			this.activeEl = el;
 		}
 	}
 }

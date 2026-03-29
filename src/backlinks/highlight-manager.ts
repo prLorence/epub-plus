@@ -152,29 +152,49 @@ export class HighlightManager {
 		return this.backlinkMap.get(cfiRange) ?? [];
 	}
 
+	/**
+	 * Toggle hover class on a specific highlight element by looking up
+	 * the annotation's mark element directly via epub.js internals,
+	 * avoiding a full querySelectorAll scan.
+	 */
 	private toggleHoverClass(cfi: string, active: boolean): void {
-		this.forEachDocument((doc) => {
-			// EPUB.js highlight elements use the 'epubjs-hl' class
-			const els = doc.querySelectorAll(".epubjs-hl");
-			for (const el of Array.from(els)) {
-				// EPUB.js stores the CFI in a data attribute or the ref
-				el.classList.toggle("epubjs-hl-hover", active);
-			}
-		});
-	}
-
-	private forEachDocument(fn: (doc: Document) => void): void {
 		const rendition = this.getRendition();
 		if (!rendition) return;
 
+		// Access epub.js annotation internals to find the element
+		const annotations = rendition.annotations as unknown as {
+			_annotations: Record<
+				string,
+				{ mark?: { element?: Element } }
+			>;
+		};
+		const hash = encodeURI(cfi + "highlight");
+		const annotation = annotations._annotations[hash];
+		const el = annotation?.mark?.element;
+		if (el) {
+			el.classList.toggle("epubjs-hl-hover", active);
+			return;
+		}
+
+		// Fallback: search iframe views for highlights matching this CFI
+		// epub.js stores highlights per-view keyed by cfiRange
 		try {
-			const contents = rendition.getContents();
-			const list = Array.isArray(contents) ? contents : [contents];
-			for (const c of list) {
-				if (c) {
-					const doc = (c as unknown as { document: Document })
-						.document;
-					if (doc) fn(doc);
+			const views = rendition.views();
+			const viewList = (
+				views as unknown as {
+					_views: { highlights?: Record<string, { element?: Element }> }[];
+				}
+			)._views;
+			if (viewList) {
+				for (const view of viewList) {
+					const hlEntry = view.highlights?.[cfi];
+					if (hlEntry?.element) {
+						hlEntry.element.classList.toggle(
+							"epubjs-hl-hover",
+							active,
+						);
+						return;
+					}
 				}
 			}
 		} catch {

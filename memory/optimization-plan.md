@@ -30,27 +30,29 @@ Last audited: 2026-03-29
 
 ---
 
-## Medium Impact — TODO
+## Medium Impact — DONE
 
-### 4. Highlight Manager — Unoptimized Hover Toggle
+### 4. Highlight Manager — Unoptimized Hover Toggle ✅
 **File:** `src/backlinks/highlight-manager.ts`
-- `toggleHoverClass()` queries all `.epubjs-hl` elements and iterates all of them to toggle one
-- `Array.from()` conversion on every hover event
-- `forEachDocument()` re-queries DOM every hover event
-- **Fix:** Maintain `Map<cfi, HTMLElement>` cache; target specific element instead of querying all
+**What was done:**
+- `toggleHoverClass()` now looks up the annotation's mark element directly via epub.js `_annotations` internals (O(1))
+- Removed `forEachDocument()` helper and `Array.from()` — no more full DOM scans on hover
+- Added fallback path via view `highlights` map if annotation lookup fails
 
-### 5. TOC Panel — Inefficient Active State Updates
+### 5. TOC Panel — Inefficient Active State Updates ✅
 **File:** `src/reader/toc-panel.ts`
-- `updateActiveState()` queries all TOC items on every page turn to toggle active class
-- No caching of element references; no early exit if href unchanged
-- **Fix:** Cache `Map<href, HTMLElement>`; track last active href and skip if unchanged; only toggle old + new elements
+**What was done:**
+- Built `Map<href, HTMLElement>` during render for O(1) lookup
+- `setActiveHref()` early-exits if href unchanged
+- `updateActiveState()` only toggles old active + new active element (not all items)
+- Removed `querySelectorAll` + `Array.from` iteration
 
-### 6. Renderer — Redundant Metadata Fetches & Style Injection
+### 6. Renderer — Redundant Metadata Fetches & Style Injection ✅
 **File:** `src/reader/epub-renderer.ts`
-- `getBookTitle()` and `getBookAuthor()` each await `book.loaded.metadata` separately
-- `updateSettings()` re-injects styles into all contents without checking if already applied
-- Location generation guard exists but could be tighter
-- **Fix:** Cache metadata result; track applied style version to avoid re-injection
+**What was done:**
+- Added `cachedMetadata` — `getBookTitle()` and `getBookAuthor()` share a single cached metadata fetch
+- Added `lastStyleHash` — `updateSettings()` skips style re-injection if font size, line height, font family, opacity, and theme haven't changed
+- `computeStyleHash()` produces a simple key from style-relevant settings
 
 ---
 

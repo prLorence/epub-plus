@@ -15,6 +15,9 @@ export class EpubRenderer {
 	private resizeObserver: ResizeObserver | null = null;
 	private contentHookRegistered = false;
 	private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+	private cachedMetadata: { title: string; creator: string } | null =
+		null;
+	private lastStyleHash = "";
 
 	constructor(
 		private containerEl: HTMLElement,
@@ -174,16 +177,26 @@ export class EpubRenderer {
 		return this.rendition?.location?.start?.href ?? null;
 	}
 
-	async getBookTitle(): Promise<string> {
-		if (!this.book) return "";
+	private async getMetadata(): Promise<{
+		title: string;
+		creator: string;
+	}> {
+		if (this.cachedMetadata) return this.cachedMetadata;
+		if (!this.book) return { title: "", creator: "" };
 		const meta = await this.book.loaded.metadata;
-		return meta.title ?? "";
+		this.cachedMetadata = {
+			title: meta.title ?? "",
+			creator: meta.creator ?? "",
+		};
+		return this.cachedMetadata;
+	}
+
+	async getBookTitle(): Promise<string> {
+		return (await this.getMetadata()).title;
 	}
 
 	async getBookAuthor(): Promise<string> {
-		if (!this.book) return "";
-		const meta = await this.book.loaded.metadata;
-		return meta.creator ?? "";
+		return (await this.getMetadata()).creator;
 	}
 
 	getCurrentChapterTitle(): string {
@@ -267,20 +280,35 @@ export class EpubRenderer {
 	}
 
 	updateSettings(settings: EpubPlusSettings): void {
+		const styleHash = this.computeStyleHash(settings);
+		const styleChanged = styleHash !== this.lastStyleHash;
+
 		this.settings = settings;
 		this.applyTheme();
 		this.applyFontSettings();
 
-		// Re-inject styles into currently rendered content
-		try {
-			const contents = this.rendition?.getContents();
-			const list = Array.isArray(contents) ? contents : [contents];
-			for (const c of list) {
-				if (c) this.injectUserStyles(c as unknown as Contents);
+		// Only re-inject styles if relevant settings actually changed
+		if (styleChanged) {
+			this.lastStyleHash = styleHash;
+			try {
+				const contents = this.rendition?.getContents();
+				const list = Array.isArray(contents)
+					? contents
+					: [contents];
+				for (const c of list) {
+					if (c)
+						this.injectUserStyles(
+							c as unknown as Contents,
+						);
+				}
+			} catch {
+				// ignore
 			}
-		} catch {
-			// ignore
 		}
+	}
+
+	private computeStyleHash(settings: EpubPlusSettings): string {
+		return `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.highlightOpacity}|${settings.theme}`;
 	}
 
 	destroy(): void {
