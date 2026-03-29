@@ -80,16 +80,33 @@ function buildFormattedLink(ctx: LinkCopyContext): string {
 	});
 }
 
+const TEMPLATE_KEYS = [
+	"fileName",
+	"title",
+	"author",
+	"chapter",
+	"selection",
+	"linkedSelection",
+	"link",
+	"rawLink",
+	"color",
+] as const;
+
+const TEMPLATE_REGEXES = new Map<string, RegExp>(
+	TEMPLATE_KEYS.map((key) => [key, new RegExp(`\\{\\{${key}\\}\\}`, "g")]),
+);
+
 function applyTemplate(
 	template: string,
 	vars: Record<string, string>,
 ): string {
 	let result = template;
 	for (const [key, value] of Object.entries(vars)) {
-		result = result.replace(
-			new RegExp(`\\{\\{${key}\\}\\}`, "g"),
-			value,
-		);
+		const re = TEMPLATE_REGEXES.get(key);
+		if (re) {
+			re.lastIndex = 0;
+			result = result.replace(re, value);
+		}
 	}
 	return result;
 }

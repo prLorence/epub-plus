@@ -56,21 +56,24 @@ Last audited: 2026-03-29
 
 ---
 
-## Low Impact — TODO
+## Low Impact — DONE
 
-### 7. Progress Store — Full State Serialization
+### 7. Progress Store — Full State Serialization ✅
 **File:** `src/progress/progress-store.ts`
-- Writes entire state file on every save even if only one book's progress changed
-- No pruning of entries for deleted books; unbounded growth
-- **Fix:** Add GC for books no longer in vault; consider per-book files or differential writes
+**What was done:**
+- Added `pruneDeleted(existingPaths)` method that removes entries for files no longer in vault
+- Called on plugin load after vault file list is available
+- Logs count of pruned entries for diagnostics
 
-### 8. Color Palette — Inline Style Manipulation
+### 8. Color Palette — Inline Style Manipulation ✅
 **File:** `src/reader/color-palette.ts`
-- Uses `setAttribute("style", ...)` with string `.replace()` on hover instead of CSS class toggles
-- Multiple attribute mutations per interaction
-- **Fix:** Use `classList.toggle()` with CSS classes for hover states
+**What was done:**
+- Replaced all `setAttribute("style", ...)` + string `.replace()` with direct `style.*` property assignments
+- Hover handlers now toggle only `borderColor` or `background` instead of rewriting the entire style string
 
-### 9. Link Copy — Regex in Loop
+### 9. Link Copy — Regex in Loop ✅
 **File:** `src/links/link-copy.ts`
-- `applyTemplate()` creates new `RegExp` for each template variable in a loop
-- **Fix:** Compile regex patterns once during plugin load or template creation
+**What was done:**
+- Pre-compiled all 9 template variable regexes into a module-level `Map<string, RegExp>`
+- `applyTemplate()` now looks up pre-compiled regex from the map instead of creating new `RegExp` per call
+- Added `lastIndex` reset for safety with global regexes

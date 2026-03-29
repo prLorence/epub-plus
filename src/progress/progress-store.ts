@@ -71,4 +71,27 @@ export class ProgressStore {
 		}
 		return latest;
 	}
+
+	/**
+	 * Remove entries for files that no longer exist in the vault.
+	 * Call on plugin load after the vault file list is available.
+	 */
+	pruneDeleted(existingPaths: Set<string>): void {
+		let pruned = 0;
+		for (const path of Object.keys(this.state)) {
+			if (!existingPaths.has(path)) {
+				delete this.state[path];
+				pruned++;
+			}
+		}
+		if (pruned > 0) {
+			this.dirty = true;
+			console.debug(
+				"[EPUB++] ProgressStore pruned",
+				pruned,
+				"stale entries",
+			);
+			this.scheduleSave();
+		}
+	}
 }

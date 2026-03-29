@@ -22,47 +22,43 @@ export function showColorPalettePopup(
 	const popup = doc.createElement("div");
 	popup.className = "epub-plus-selection-popup";
 
-	// Position above selection
-	popup.setAttribute(
-		"style",
-		`position:absolute;left:${rect.left + rect.width / 2}px;top:${rect.top - 44}px;` +
-			"transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:4px;" +
-			"background:#2b2b2b;padding:6px 10px;border-radius:6px;" +
-			"box-shadow:0 2px 12px rgba(0,0,0,0.4);white-space:nowrap;",
-	);
+	const s = popup.style;
+	s.position = "absolute";
+	s.left = `${rect.left + rect.width / 2}px`;
+	s.top = `${rect.top - 44}px`;
+	s.transform = "translateX(-50%)";
+	s.zIndex = "9999";
+	s.display = "flex";
+	s.alignItems = "center";
+	s.gap = "4px";
+	s.background = "#2b2b2b";
+	s.padding = "6px 10px";
+	s.borderRadius = "6px";
+	s.boxShadow = "0 2px 12px rgba(0,0,0,0.4)";
+	s.whiteSpace = "nowrap";
 
 	// Color swatches
 	for (const color of palette) {
 		const swatch = doc.createElement("button");
 		swatch.className = "epub-plus-popup-swatch";
 		swatch.title = color.name;
-		swatch.setAttribute(
-			"style",
-			`width:22px;height:22px;border-radius:50%;border:2px solid transparent;` +
-				`background:${color.hex};cursor:pointer;padding:0;margin:0;` +
-				"transition:border-color 0.15s;",
-		);
+
+		const ss = swatch.style;
+		ss.width = "22px";
+		ss.height = "22px";
+		ss.borderRadius = "50%";
+		ss.border = "2px solid transparent";
+		ss.background = color.hex;
+		ss.cursor = "pointer";
+		ss.padding = "0";
+		ss.margin = "0";
+		ss.transition = "border-color 0.15s";
+
 		swatch.addEventListener("mouseenter", () => {
-			swatch.setAttribute(
-				"style",
-				swatch
-					.getAttribute("style")!
-					.replace(
-						"border:2px solid transparent",
-						"border:2px solid #fff",
-					),
-			);
+			ss.borderColor = "#fff";
 		});
 		swatch.addEventListener("mouseleave", () => {
-			swatch.setAttribute(
-				"style",
-				swatch
-					.getAttribute("style")!
-					.replace(
-						"border:2px solid #fff",
-						"border:2px solid transparent",
-					),
-			);
+			ss.borderColor = "transparent";
 		});
 		swatch.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -74,10 +70,11 @@ export function showColorPalettePopup(
 
 	// Separator
 	const sep = doc.createElement("span");
-	sep.setAttribute(
-		"style",
-		"width:1px;height:18px;background:#555;margin:0 4px;",
-	);
+	const sepS = sep.style;
+	sepS.width = "1px";
+	sepS.height = "18px";
+	sepS.background = "#555";
+	sepS.margin = "0 4px";
 	popup.appendChild(sep);
 
 	// "Add to note" button
@@ -85,30 +82,24 @@ export function showColorPalettePopup(
 	addBtn.className = "epub-plus-popup-add-btn";
 	addBtn.textContent = "Add to note";
 	addBtn.title = "Add to active note";
-	addBtn.setAttribute(
-		"style",
-		"background:none;border:none;color:#ccc;cursor:pointer;" +
-			"font-size:11px;padding:2px 6px;border-radius:3px;",
-	);
+
+	const bs = addBtn.style;
+	bs.background = "none";
+	bs.border = "none";
+	bs.color = "#ccc";
+	bs.cursor = "pointer";
+	bs.fontSize = "11px";
+	bs.padding = "2px 6px";
+	bs.borderRadius = "3px";
+
 	addBtn.addEventListener("mouseenter", () => {
-		addBtn.setAttribute(
-			"style",
-			addBtn
-				.getAttribute("style")!
-				.replace("background:none", "background:#444"),
-		);
+		bs.background = "#444";
 	});
 	addBtn.addEventListener("mouseleave", () => {
-		addBtn.setAttribute(
-			"style",
-			addBtn
-				.getAttribute("style")!
-				.replace("background:#444", "background:none"),
-		);
+		bs.background = "none";
 	});
 	addBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
-		// Use default color when adding to note
 		const defaultColor = palette[0];
 		if (defaultColor) {
 			callbacks.onAddToNote(defaultColor);
@@ -128,9 +119,7 @@ export function showColorPalettePopup(
 		}
 	};
 	const onMouseDown = (e: Event) => {
-		// If clicking inside the popup, don't dismiss
 		if (popup.contains(e.target as Node)) return;
-		// Otherwise wait for selection to update, then check
 		setTimeout(checkSelection, 50);
 	};
 	doc.addEventListener("selectionchange", checkSelection);
