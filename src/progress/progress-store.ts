@@ -5,7 +5,6 @@ import type { ReadingProgress, ReadingStateMap } from "../types";
 export class ProgressStore {
 	private state: ReadingStateMap = {};
 	private dirty = false;
-	private saving = false;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private vault: Vault) {}
@@ -26,23 +25,36 @@ export class ProgressStore {
 		}
 	}
 
+	private savePromise: Promise<void> | null = null;
+
 	async save(): Promise<void> {
-		if (!this.dirty || this.saving) return;
-		this.saving = true;
+		// Wait for any in-flight save to finish first
+		if (this.savePromise) {
+			await this.savePromise;
+		}
+		if (!this.dirty) return;
+		this.dirty = false;
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
 			this.saveTimer = null;
 		}
 
 		const data = JSON.stringify(this.state, null, 2);
-		try {
-			await this.vault.adapter.write(READING_STATE_FILE, data);
-			console.debug("[EPUB++] ProgressStore saved to disk");
-		} catch (e) {
-			console.error("[EPUB++] ProgressStore: failed to save:", e);
-		}
-		this.dirty = false;
-		this.saving = false;
+		this.savePromise = this.vault.adapter
+			.write(READING_STATE_FILE, data)
+			.then(() => {
+				console.debug("[EPUB++] ProgressStore saved to disk");
+			})
+			.catch((e) => {
+				console.error(
+					"[EPUB++] ProgressStore: failed to save:",
+					e,
+				);
+			})
+			.finally(() => {
+				this.savePromise = null;
+			});
+		await this.savePromise;
 	}
 
 	scheduleSave(): void {
