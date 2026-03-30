@@ -19,8 +19,15 @@ export class ReaderToolbar {
 
 	updateProgress(percent: number): void {
 		if (this.progressEl) {
-			this.progressEl.textContent =
-				percent > 0 ? `${percent}%` : "";
+			if (percent <= 0) {
+				this.progressEl.textContent = "";
+			} else {
+				// Show integer if whole number, one decimal otherwise
+				const display = percent % 1 === 0
+					? String(percent)
+					: percent.toFixed(1);
+				this.progressEl.textContent = `${display}%`;
+			}
 		}
 	}
 

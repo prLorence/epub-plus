@@ -62,7 +62,7 @@ export function showColorPalettePopup(
 		swatch.addEventListener("click", (e) => {
 			e.stopPropagation();
 			callbacks.onColorSelect(color);
-			popup.remove();
+			cleanup();
 		});
 		popup.appendChild(swatch);
 	}
@@ -103,22 +103,29 @@ export function showColorPalettePopup(
 		if (defaultColor) {
 			callbacks.onAddToNote(defaultColor);
 		}
-		popup.remove();
+		cleanup();
 	});
 	popup.appendChild(addBtn);
 
-	// Dismiss only when the selection is cleared
+	// Dismiss when the selection is cleared or popup is removed
 	const win = doc.defaultView;
+	let dismissed = false;
+	const cleanup = () => {
+		if (dismissed) return;
+		dismissed = true;
+		popup.remove();
+		doc.removeEventListener("selectionchange", checkSelection);
+		doc.removeEventListener("mousedown", onMouseDown);
+	};
 	const checkSelection = () => {
 		const sel = win?.getSelection();
 		if (!sel || sel.isCollapsed || sel.toString().trim() === "") {
-			popup.remove();
-			doc.removeEventListener("selectionchange", checkSelection);
-			doc.removeEventListener("mousedown", onMouseDown);
+			cleanup();
 		}
 	};
 	const onMouseDown = (e: Event) => {
 		if (popup.contains(e.target as Node)) return;
+		// Defer check so the selection has time to clear
 		setTimeout(checkSelection, 50);
 	};
 	doc.addEventListener("selectionchange", checkSelection);

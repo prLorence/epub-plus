@@ -15,6 +15,7 @@ export interface EpubPlusSettings {
 	fontFamily: string;
 	lineHeight: number;
 	marginSize: number;
+	maxContentWidth: number; // 0 = no limit
 	theme: "auto" | "light" | "dark" | "sepia";
 	showTocOnOpen: boolean;
 	autoSaveProgress: boolean;
@@ -58,6 +59,7 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	fontFamily: "",
 	lineHeight: 1.6,
 	marginSize: 40,
+	maxContentWidth: 0,
 	theme: "auto",
 	showTocOnOpen: false,
 	autoSaveProgress: true,
@@ -195,6 +197,34 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(containerEl)
+			.setName("Max content width")
+			.setDesc(
+				"Maximum width of the reading area in pixels. Set to 0 for no limit.",
+			)
+			.addText((t) =>
+				t
+					.setValue(
+						String(this.plugin.settings.maxContentWidth),
+					)
+					.onChange(async (v) => {
+						const n = parseInt(v, 10);
+						if (!isNaN(n) && n >= 0) {
+							this.plugin.settings.maxContentWidth = n;
+							await this.plugin.saveSettings();
+						}
+					}),
+			)
+			.then((s) => {
+				const input = s.controlEl.querySelector("input");
+				if (input) {
+					input.type = "number";
+					input.min = "0";
+					input.placeholder = "0 (no limit)";
+					input.addClass("epub-plus-narrow-input");
+				}
+			});
 
 		new Setting(containerEl)
 			.setName("Theme")
