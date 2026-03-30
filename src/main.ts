@@ -62,8 +62,12 @@ export default class EpubPlusPlugin extends Plugin {
 
 	onunload(): void {
 		this.unpatchOpenLinkText();
-		void this.progressStore.save();
-		void this.textCache.save();
+		void this.progressStore.save().catch((e) =>
+			console.error("[EPUB++] Failed to save progress on unload:", e),
+		);
+		void this.textCache.save().catch((e) =>
+			console.error("[EPUB++] Failed to save text cache on unload:", e),
+		);
 		this.textCache.destroyPool();
 	}
 

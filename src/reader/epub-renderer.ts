@@ -18,6 +18,8 @@ export class EpubRenderer {
 	private cachedMetadata: { title: string; creator: string } | null =
 		null;
 	private lastStyleHash = "";
+	private lastResizeWidth = 0;
+	private lastResizeHeight = 0;
 
 	constructor(
 		private containerEl: HTMLElement,
@@ -216,11 +218,14 @@ export class EpubRenderer {
 		}
 	}
 
+	/**
+	 * Get the current reading progress as a percentage (0-100).
+	 * Returns one decimal place for smoother progress display.
+	 */
 	getPercentage(): number {
 		if (!this.rendition?.location || !this.locationsGenerated) return 0;
-		return Math.round(
-			(this.rendition.location.start.percentage ?? 0) * 100,
-		);
+		const raw = (this.rendition.location.start.percentage ?? 0) * 100;
+		return Math.round(raw * 10) / 10;
 	}
 
 	areLocationsReady(): boolean {
@@ -283,12 +288,16 @@ export class EpubRenderer {
 		const styleHash = this.computeStyleHash(settings);
 		const styleChanged = styleHash !== this.lastStyleHash;
 
-		this.settings = settings;
-		this.applyTheme();
-		this.applyFontSettings();
+		const layoutChanged =
+			settings.maxContentWidth !== this.settings.maxContentWidth
+			|| settings.marginSize !== this.settings.marginSize;
 
-		// Only re-inject styles if relevant settings actually changed
+		this.settings = settings;
+
+		// Only re-apply theme and re-inject styles if relevant settings changed
 		if (styleChanged) {
+			this.applyTheme();
+			this.applyFontSettings();
 			this.lastStyleHash = styleHash;
 			try {
 				const contents = this.rendition?.getContents();
@@ -305,10 +314,17 @@ export class EpubRenderer {
 				// ignore
 			}
 		}
+
+		// Re-layout if width-affecting settings changed
+		if (layoutChanged) {
+			this.lastResizeWidth = 0;
+			this.lastResizeHeight = 0;
+			this.handleResize();
+		}
 	}
 
 	private computeStyleHash(settings: EpubPlusSettings): string {
-		return `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.highlightOpacity}|${settings.theme}`;
+		return `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.highlightOpacity}|${settings.theme}|${settings.maxContentWidth}|${settings.marginSize}`;
 	}
 
 	destroy(): void {
@@ -327,9 +343,19 @@ export class EpubRenderer {
 	private getContainerSize(): { width: number; height: number } {
 		const w = this.containerEl.clientWidth;
 		const h = this.containerEl.clientHeight;
-		const margin = (this.settings.marginSize ?? 40) * 2;
+		const configuredMargin = this.settings.marginSize ?? 40;
+		// Reduce margins automatically for narrow panes so content stays readable
+		const margin = w < 400 ? Math.min(configuredMargin, 10) * 2
+			: w < 600 ? Math.min(configuredMargin, 20) * 2
+			: configuredMargin * 2;
+		let contentWidth = Math.floor(Math.max(w - margin, 200)) || 600;
+		// Clamp to max content width if set
+		const maxWidth = this.settings.maxContentWidth ?? 0;
+		if (maxWidth > 0) {
+			contentWidth = Math.min(contentWidth, maxWidth);
+		}
 		return {
-			width: Math.floor(Math.max(w - margin, 200)) || 600,
+			width: contentWidth,
 			height: Math.floor(h) || 400,
 		};
 	}
@@ -342,7 +368,10 @@ export class EpubRenderer {
 		try {
 			if (!this.rendition) return;
 			const { width, height } = this.getContainerSize();
-			if (width > 0 && height > 0) {
+			if (width > 0 && height > 0
+				&& (width !== this.lastResizeWidth || height !== this.lastResizeHeight)) {
+				this.lastResizeWidth = width;
+				this.lastResizeHeight = height;
 				this.rendition.resize(width, height);
 			}
 		} catch (e) {

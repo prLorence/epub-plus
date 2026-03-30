@@ -42,6 +42,9 @@ export class EpubView extends FileView {
 	private loadingEl: HTMLElement | null = null;
 	private vimBindings: VimBindings | null = null;
 	private pageTurnsSinceSave = 0;
+	private narrowObserver: ResizeObserver | null = null;
+	private progressFillEl: HTMLElement | null = null;
+	private pageInfoEl: HTMLElement | null = null;
 	private pendingSelection: {
 		cfiRange: string;
 		text: string;
@@ -211,13 +214,14 @@ export class EpubView extends FileView {
 		// Book is ready — hide loading screen
 		this.hideLoading();
 
-		// Fix blank page: after the DOM is fully laid out, resize and
-		// re-display at the saved position.
+		// Fix blank page: EPUB.js needs the container to be fully laid out
+		// before it can render correctly. Wait for the layout to settle,
+		// then resize and re-display at the saved position.
 		setTimeout(() => {
 			if (!this.renderer) return;
 			this.renderer.forceResize();
 			void this.renderer.display(startCfi ?? undefined);
-		}, 500);
+		}, 300);
 
 		// Vim keybindings
 		if (this.plugin.settings.enableVimBindings && this.renderer) {
@@ -231,10 +235,14 @@ export class EpubView extends FileView {
 	async onUnloadFile(file: TFile): Promise<void> {
 		await this.plugin.progressStore.save();
 		this.teardownBacklinks();
+		this.narrowObserver?.disconnect();
+		this.narrowObserver = null;
 		this.renderer?.destroy();
 		this.renderer = null;
 		this.tocPanel = null;
 		this.toolbar = null;
+		this.progressFillEl = null;
+		this.pageInfoEl = null;
 		if (this.loadingEl) {
 			this.loadingEl.remove();
 			this.loadingEl = null;
@@ -291,10 +299,30 @@ export class EpubView extends FileView {
 			cls: "epub-plus-rendition",
 		});
 		const bottomBar = readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
-		bottomBar.createDiv({ cls: "epub-plus-progress-fill" });
-		bottomBar.createDiv({ cls: "epub-plus-page-info" });
+		this.progressFillEl = bottomBar.createDiv({ cls: "epub-plus-progress-fill" });
+		this.pageInfoEl = bottomBar.createDiv({ cls: "epub-plus-page-info" });
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
+
+		// Observe width changes to toggle narrow/very-narrow modes.
+		// Track previous breakpoint to avoid redundant DOM mutations.
+		const rootEl = this.contentEl;
+		let prevNarrow = false;
+		let prevVeryNarrow = false;
+		this.narrowObserver = new ResizeObserver(() => {
+			const w = rootEl.clientWidth;
+			const narrow = w < 500;
+			const veryNarrow = w < 350;
+			if (narrow !== prevNarrow) {
+				rootEl.classList.toggle("is-narrow", narrow);
+				prevNarrow = narrow;
+			}
+			if (veryNarrow !== prevVeryNarrow) {
+				rootEl.classList.toggle("is-very-narrow", veryNarrow);
+				prevVeryNarrow = veryNarrow;
+			}
+		});
+		this.narrowObserver.observe(rootEl);
 	}
 
 	private hideLoading(): void {
@@ -410,10 +438,8 @@ export class EpubView extends FileView {
 	// ── Event Handlers ──
 
 	private handleRendered(): void {
-		// Re-apply highlight hover listeners after EPUB.js renders a new section
-		// EPUB.js auto-injects annotations into new views, but our custom hover
-		// listeners need to be re-attached to the new DOM elements
-		this.highlightManager?.reattachHoverListeners();
+		// EPUB.js annotations API auto-injects highlights on page turns.
+		// No manual re-attach needed — kept as a hook for future use.
 	}
 
 	private handleRelocated(location: Location): void {
@@ -423,41 +449,35 @@ export class EpubView extends FileView {
 			? this.renderer!.getPercentage()
 			: 0;
 
-		if (this.toolbar && this.renderer) {
+		const chapterName = this.renderer?.getCurrentChapterTitle() ?? "";
+
+		if (this.toolbar) {
 			this.toolbar.updateProgress(bookPercent);
-			this.toolbar.updateChapter(
-				this.renderer.getCurrentChapterTitle(),
-			);
+			this.toolbar.updateChapter(chapterName);
 		}
 
 		// Update progress bar (book-level)
-		const fill = this.containerEl_?.querySelector(
-			".epub-plus-progress-fill",
-		) as HTMLElement | null;
-		if (fill) {
-			fill.setCssProps({
+		if (this.progressFillEl) {
+			this.progressFillEl.setCssProps({
 				"--progress": `${String(bookPercent)}%`,
 			});
 		}
 
 		// Update page counter (chapter-level pages)
-		const pageInfo = this.containerEl_?.querySelector(
-			".epub-plus-page-info",
-		) as HTMLElement | null;
-		if (pageInfo) {
+		if (this.pageInfoEl) {
 			const displayed = location.start.displayed;
 			if (displayed) {
-				pageInfo.textContent =
+				this.pageInfoEl.textContent =
 					`${String(displayed.page)}/${String(displayed.total)}`;
 			}
 		}
 
 		if (this.tocPanel) {
-			this.tocPanel.setActiveHref(location.start.href);
+			const contentDoc = this.getContentDocument();
+			this.tocPanel.setActiveHref(location.start.href, contentDoc);
 		}
 
 		// Update backlink panel chapter filter
-		const chapterName = this.renderer?.getCurrentChapterTitle() ?? "";
 		this.backlinkPanel?.setCurrentChapter(
 			location.start.href,
 			chapterName,
@@ -620,6 +640,20 @@ export class EpubView extends FileView {
 		);
 		this.renderer?.updateSettings(this.plugin.settings);
 		void this.plugin.saveSettings();
+	}
+
+	/**
+	 * Get the Document of the currently rendered EPUB section (iframe).
+	 */
+	private getContentDocument(): Document | undefined {
+		try {
+			const contents = this.renderer?.getRendition()?.getContents();
+			const list = Array.isArray(contents) ? contents : [contents];
+			const first = list[0] as { document?: Document } | undefined;
+			return first?.document;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private getSavedCfi(file: TFile): string | null {

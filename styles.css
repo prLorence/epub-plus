@@ -516,6 +516,74 @@
 	font-style: italic;
 }
 
+/* ── Narrow Reader ── */
+
+/* When the reader pane is narrow, collapse non-essential UI */
+@container style(--epub-plus-narrow: 1) {
+	/* handled below via element queries */
+}
+
+/* Narrow: hide chapter text and font controls from toolbar */
+.epub-plus-root.is-narrow .epub-plus-toolbar-chapter {
+	display: none;
+}
+
+.epub-plus-root.is-narrow .epub-plus-toolbar-center {
+	flex: 0;
+	gap: 0;
+}
+
+/* Narrow: reduce toolbar padding */
+.epub-plus-root.is-narrow .epub-plus-toolbar {
+	padding: 1px 2px;
+	gap: 1px;
+}
+
+/* Narrow: hide font size buttons */
+.epub-plus-root.is-narrow .epub-plus-toolbar-right .epub-plus-toolbar-btn[title="Decrease font size"],
+.epub-plus-root.is-narrow .epub-plus-toolbar-right .epub-plus-toolbar-btn[title="Increase font size"] {
+	display: none;
+}
+
+/* Narrow: reduce TOC and backlink panel widths */
+.epub-plus-root.is-narrow .epub-plus-toc-panel {
+	width: 180px;
+	min-width: 140px;
+}
+
+.epub-plus-root.is-narrow .epub-plus-backlink-panel {
+	width: 180px;
+	min-width: 140px;
+}
+
+/* Narrow: keep progress % visible in toolbar */
+.epub-plus-root.is-narrow .epub-plus-toolbar-progress {
+	font-size: 11px;
+}
+
+/* Very narrow: overlay panels instead of side-by-side */
+.epub-plus-root.is-very-narrow .epub-plus-toc-panel.is-visible {
+	position: absolute;
+	z-index: 5;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 240px;
+	border-right: 1px solid var(--background-modifier-border);
+	box-shadow: 4px 0 6px rgba(0, 0, 0, 0.1);
+}
+
+.epub-plus-root.is-very-narrow .epub-plus-backlink-panel.is-visible {
+	position: absolute;
+	z-index: 5;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	width: 240px;
+	border-left: 1px solid var(--background-modifier-border);
+	box-shadow: -4px 0 6px rgba(0, 0, 0, 0.1);
+}
+
 /* ── Settings ── */
 
 .epub-plus-narrow-input {
