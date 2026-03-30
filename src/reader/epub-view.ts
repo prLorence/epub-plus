@@ -229,7 +229,7 @@ export class EpubView extends FileView {
 	}
 
 	async onUnloadFile(file: TFile): Promise<void> {
-		this.saveProgress();
+		await this.plugin.progressStore.save();
 		this.teardownBacklinks();
 		this.renderer?.destroy();
 		this.renderer = null;
@@ -626,10 +626,5 @@ export class EpubView extends FileView {
 		const progress = this.plugin.progressStore.get(file.path);
 		console.debug("[EPUB++] getSavedCfi:", file.path, "→", progress?.cfi ?? "none", progress?.percent ?? 0, "%");
 		return progress?.cfi ?? null;
-	}
-
-	private saveProgress(): void {
-		if (!this.plugin.settings.autoSaveProgress) return;
-		void this.plugin.progressStore.save();
 	}
 }

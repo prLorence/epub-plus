@@ -517,8 +517,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 				if (input) {
 					input.type = "number";
 					input.min = "1";
-					// eslint-disable-next-line obsidianmd/no-static-styles-assignment -- dynamic settings input
-				input.style.width = "60px";
+					input.addClass("epub-plus-narrow-input");
 				}
 			});
 	}

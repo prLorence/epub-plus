@@ -515,3 +515,9 @@
 	color: var(--text-faint);
 	font-style: italic;
 }
+
+/* ── Settings ── */
+
+.epub-plus-narrow-input {
+	width: 60px;
+}
