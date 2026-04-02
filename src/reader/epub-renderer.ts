@@ -1,4 +1,5 @@
 import type { EpubPlusSettings } from "../settings";
+import { Platform } from "obsidian";
 import type {
 	IBookEngine,
 	IRendition,
@@ -95,7 +96,13 @@ export class EpubRenderer {
 			this.callbacks.onFocused?.();
 		});
 
+		let lastObservedWidth = this.containerEl.clientWidth;
 		this.resizeObserver = new ResizeObserver(() => {
+			const newWidth = this.containerEl.clientWidth;
+			// On mobile, ignore height-only changes (keyboard open/close)
+			if (Platform.isMobile && newWidth === lastObservedWidth) return;
+			lastObservedWidth = newWidth;
+
 			if (this.resizeTimer) clearTimeout(this.resizeTimer);
 			this.resizeTimer = setTimeout(() => {
 				this.resizeTimer = null;
@@ -504,8 +511,10 @@ export class EpubRenderer {
 
 		if (setting === "auto") {
 			isDark = document.body.classList.contains("theme-dark");
-			bg = isDark ? "#1e1e1e" : "#ffffff";
-			fg = isDark ? "#dcddde" : "#1e1e1e";
+			// Use Obsidian's actual CSS variables for perfect theme matching
+			const computed = getComputedStyle(document.body);
+			bg = computed.getPropertyValue("--background-primary").trim() || (isDark ? "#1e1e1e" : "#ffffff");
+			fg = computed.getPropertyValue("--text-normal").trim() || (isDark ? "#dcddde" : "#1e1e1e");
 		} else if (setting === "dark") {
 			isDark = true;
 			bg = "#1e1e1e";

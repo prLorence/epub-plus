@@ -1129,9 +1129,11 @@
 	max-width: calc(100vw - 32px);
 }
 
-/* Page turn zones: wider on mobile */
+/* Page turn zones: narrower on mobile since swipe is primary */
 .epub-plus-root.is-mobile .epub-plus-page-zone {
-	width: 25%;
+	width: 10%;
+	/* Lower z-index so highlights are tappable */
+	z-index: 1;
 }
 
 /* Bottom bar: taller for touch */

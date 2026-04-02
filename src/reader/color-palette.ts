@@ -1,3 +1,4 @@
+import { Platform } from "obsidian";
 import type { PaletteColor } from "../types";
 
 export interface PaletteCallbacks {
@@ -24,7 +25,10 @@ export function showColorPalettePopup(
 	const s = popup.style;
 	s.position = "absolute";
 	s.left = `${rect.left + rect.width / 2}px`;
-	s.top = `${rect.top - 44}px`;
+	// On mobile, show below selection to avoid conflicting with OS selection menu
+	s.top = Platform.isMobile
+		? `${rect.bottom + 8}px`
+		: `${rect.top - 44}px`;
 	s.transform = "translateX(-50%)";
 	s.zIndex = "9999";
 	s.display = "flex";
