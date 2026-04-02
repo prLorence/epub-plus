@@ -21,29 +21,40 @@ export class VimBindings {
 		this.register();
 	}
 
+	private isTyping(e: KeyboardEvent): boolean {
+		const tag = (e.target as HTMLElement)?.tagName;
+		return tag === "INPUT" || tag === "TEXTAREA"
+			|| (e.target as HTMLElement)?.isContentEditable === true;
+	}
+
 	private register(): void {
 		// j/k — next/prev page
-		this.scope.register([], "j", () => {
+		this.scope.register([], "j", (e) => {
+			if (this.isTyping(e)) return true;
 			this.callbacks.onNext();
 			return false;
 		});
-		this.scope.register([], "k", () => {
+		this.scope.register([], "k", (e) => {
+			if (this.isTyping(e)) return true;
 			this.callbacks.onPrev();
 			return false;
 		});
 
 		// h/l — prev/next page
-		this.scope.register([], "h", () => {
+		this.scope.register([], "h", (e) => {
+			if (this.isTyping(e)) return true;
 			this.callbacks.onPrev();
 			return false;
 		});
-		this.scope.register([], "l", () => {
+		this.scope.register([], "l", (e) => {
+			if (this.isTyping(e)) return true;
 			this.callbacks.onNext();
 			return false;
 		});
 
 		// G (shift+g) — go to end
-		this.scope.register(["Shift"], "g", () => {
+		this.scope.register(["Shift"], "g", (e) => {
+			if (this.isTyping(e)) return true;
 			const rendition = this.renderer.getRendition();
 			if (rendition) {
 				const endHref = rendition.getSpineEndHref();
@@ -55,7 +66,8 @@ export class VimBindings {
 		});
 
 		// g — double-tap for beginning
-		this.scope.register([], "g", () => {
+		this.scope.register([], "g", (e) => {
+			if (this.isTyping(e)) return true;
 			const now = Date.now();
 			if (now - this.lastGPress < 500) {
 				void this.renderer.display();

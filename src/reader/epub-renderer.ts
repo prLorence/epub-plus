@@ -15,6 +15,7 @@ export interface EpubRendererCallbacks {
 	onRendered?: () => void;
 	onFocused?: () => void;
 	onBeforeResizeNav?: () => void;
+	onFootnoteClick?: (content: string, event: MouseEvent) => void;
 }
 
 export class EpubRenderer {
@@ -213,6 +214,90 @@ export class EpubRenderer {
 		if (!this.rendition || this.stylesInjected) return;
 		this.stylesInjected = true;
 		this.rendition.injectStylesheet(this.buildUserCss(), "epub-plus-user-styles");
+
+		// Set up footnote interception on each rendered section
+		if (this.callbacks.onFootnoteClick && this.engine) {
+			this.setupFootnoteInterception();
+		}
+	}
+
+	private setupFootnoteInterception(): void {
+		if (!this.rendition) return;
+
+		// Register a content hook that intercepts footnote link clicks
+		this.rendition.on("rendered", () => {
+			const contents = this.rendition?.getContents() ?? [];
+			for (const content of contents) {
+				this.interceptFootnoteLinks(content.document);
+			}
+		});
+
+		// Also run on already-rendered content
+		const contents = this.rendition.getContents();
+		for (const content of contents) {
+			this.interceptFootnoteLinks(content.document);
+		}
+	}
+
+	private interceptFootnoteLinks(doc: Document): void {
+		if (!doc) return;
+		const links = doc.querySelectorAll("a[href]");
+		for (let i = 0; i < links.length; i++) {
+			const link = links[i] as HTMLAnchorElement;
+			if (link.dataset["fnBound"]) continue;
+			link.dataset["fnBound"] = "1";
+
+			// Detect footnote links:
+			// - epub:type="noteref"
+			// - class contains "footnote", "endnote", "note"
+			// - href points to an anchor in the same or different file
+			// - link text is a number like [1], [2], etc.
+			const isFootnote =
+				link.getAttribute("epub:type")?.includes("noteref") ||
+				link.getAttribute("role") === "doc-noteref" ||
+				/\bfootnote\b|\bendnote\b|\bnoteref\b/i.test(link.className) ||
+				/^\[\d+\]$|^\d+$/.test(link.textContent?.trim() ?? "");
+
+			if (!isFootnote) continue;
+
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.loadFootnoteContent(link.getAttribute("href") ?? "")
+					.then((content) => {
+						if (content && this.callbacks.onFootnoteClick) {
+							this.callbacks.onFootnoteClick(content, e as MouseEvent);
+						}
+					});
+			});
+		}
+	}
+
+	private async loadFootnoteContent(href: string): Promise<string | null> {
+		if (!this.engine || !href) return null;
+
+		try {
+			// href could be "#id" (same section) or "file.xhtml#id" (different section)
+			const hashIdx = href.indexOf("#");
+			const targetId = hashIdx >= 0 ? href.slice(hashIdx + 1) : "";
+
+			if (!targetId) return null;
+
+			// Try to find the element in the currently rendered content
+			const contents = this.rendition?.getContents() ?? [];
+			for (const content of contents) {
+				const el = content.document.getElementById(targetId);
+				if (el) {
+					return el.innerHTML;
+				}
+			}
+
+			// If not in current section, we'd need to load the target section.
+			// For now, return null — the link will navigate normally via epub.js.
+			return null;
+		} catch {
+			return null;
+		}
 	}
 
 	updateSettings(settings: EpubPlusSettings): void {

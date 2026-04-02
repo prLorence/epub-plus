@@ -7,6 +7,7 @@ export interface HighlightCallbacks {
 		backlinks: EpubBacklink[] | null,
 		event: MouseEvent,
 	) => void;
+	onHighlightContextMenu?: (backlinks: EpubBacklink[], event: MouseEvent) => void;
 }
 
 /**
@@ -81,6 +82,41 @@ export class HighlightManager {
 		}
 
 		this.backlinkMap = grouped;
+
+		// Attach contextmenu listeners for right-click color change
+		if (this.callbacks.onHighlightContextMenu) {
+			this.attachContextMenuListeners();
+		}
+	}
+
+	/**
+	 * Attach right-click listeners to highlight elements in the content.
+	 * Must be called after highlights are applied.
+	 */
+	private attachContextMenuListeners(): void {
+		const rendition = this.getRendition();
+		if (!rendition) return;
+
+		for (const content of rendition.getContents()) {
+			const hlElements = content.document.querySelectorAll(".epubjs-hl");
+			for (let i = 0; i < hlElements.length; i++) {
+				const el = hlElements[i] as HTMLElement;
+				// Avoid double-binding
+				if (el.dataset["ctxBound"]) continue;
+				el.dataset["ctxBound"] = "1";
+
+				el.addEventListener("contextmenu", (e: MouseEvent) => {
+					e.preventDefault();
+					e.stopPropagation();
+					// Find which backlinks this highlight belongs to
+					const cfi = el.getAttribute("data-epubcfi") ?? "";
+					const bls = this.backlinkMap.get(cfi);
+					if (bls && this.callbacks.onHighlightContextMenu) {
+						this.callbacks.onHighlightContextMenu(bls, e);
+					}
+				});
+			}
+		}
 	}
 
 	clearAll(): void {

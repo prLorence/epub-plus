@@ -18,11 +18,9 @@ import {
 } from "../backlinks/backlink-scanner";
 import { HighlightManager } from "../backlinks/highlight-manager";
 import { BacklinkPanel } from "../backlinks/backlink-panel";
+import { AnnotationPanel } from "../backlinks/annotation-panel";
 import { HoverSyncBridge } from "../backlinks/hover-sync";
-import {
-	showHighlightPopover,
-	navigateToBacklink,
-} from "../backlinks/hover-popover";
+import { navigateToBacklink } from "../backlinks/hover-popover";
 import { showColorPalettePopup } from "./color-palette";
 import type { PaletteColor } from "../types";
 import type EpubPlusPlugin from "../main";
@@ -34,6 +32,7 @@ export class EpubView extends FileView {
 	private toolbar: ReaderToolbar | null = null;
 	private highlightManager: HighlightManager | null = null;
 	private backlinkPanel: BacklinkPanel | null = null;
+	private annotationPanel: AnnotationPanel | null = null;
 	private hoverSync: HoverSyncBridge | null = null;
 	private backlinkWatchRefs: EventRef[] = [];
 	private pendingCfi: string | null = null;
@@ -64,19 +63,23 @@ export class EpubView extends FileView {
 		this.navigation = true;
 
 		this.scope = new Scope(this.app.scope);
-		this.scope.register([], "ArrowRight", () => {
+		this.scope.register([], "ArrowRight", (e) => {
+			if (this.isTyping(e)) return true;
 			this.nextPage();
 			return false;
 		});
-		this.scope.register([], "ArrowLeft", () => {
+		this.scope.register([], "ArrowLeft", (e) => {
+			if (this.isTyping(e)) return true;
 			this.prevPage();
 			return false;
 		});
-		this.scope.register([], " ", () => {
+		this.scope.register([], " ", (e) => {
+			if (this.isTyping(e)) return true;
 			this.nextPage();
 			return false;
 		});
-		this.scope.register(["Shift"], " ", () => {
+		this.scope.register(["Shift"], " ", (e) => {
+			if (this.isTyping(e)) return true;
 			this.prevPage();
 			return false;
 		});
@@ -93,21 +96,25 @@ export class EpubView extends FileView {
 		});
 
 		// Page Up / Page Down
-		this.scope.register([], "PageDown", () => {
+		this.scope.register([], "PageDown", (e) => {
+			if (this.isTyping(e)) return true;
 			this.nextPage();
 			return false;
 		});
-		this.scope.register([], "PageUp", () => {
+		this.scope.register([], "PageUp", (e) => {
+			if (this.isTyping(e)) return true;
 			this.prevPage();
 			return false;
 		});
 
 		// Home / End — go to beginning / end of book
-		this.scope.register([], "Home", () => {
+		this.scope.register([], "Home", (e) => {
+			if (this.isTyping(e)) return true;
 			void this.renderer?.display();
 			return false;
 		});
-		this.scope.register([], "End", () => {
+		this.scope.register([], "End", (e) => {
+			if (this.isTyping(e)) return true;
 			const href = this.renderer?.getRendition()?.getSpineEndHref();
 			if (href) void this.renderer?.display(href);
 			return false;
@@ -204,6 +211,9 @@ export class EpubView extends FileView {
 				onBeforeResizeNav: () => {
 					this.suppressHistoryPush = true;
 				},
+				onFootnoteClick: (content, event) => {
+					this.showFootnotePopup(content, event);
+				},
 			},
 		);
 
@@ -236,6 +246,7 @@ export class EpubView extends FileView {
 				onNext: () => this.nextPage(),
 				onTocToggle: () => this.tocPanel?.toggle(),
 				onBacklinksToggle: () => this.backlinkPanel?.toggle(),
+				onAnnotationsToggle: () => this.annotationPanel?.toggle(),
 				onFontSizeChange: (delta) => this.changeFontSize(delta),
 				onGoBack: () => this.goBack(),
 				onLinkNote: () => this.linkCompanionNote(),
@@ -364,6 +375,7 @@ export class EpubView extends FileView {
 		});
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
+		this.containerEl_.createDiv({ cls: "epub-plus-anno-panel" });
 
 		// Observe width changes to toggle narrow/very-narrow modes.
 		// Track previous breakpoint to avoid redundant DOM mutations.
@@ -411,6 +423,8 @@ export class EpubView extends FileView {
 					this.handleHighlightClick(bls, e),
 				onHighlightHover: (bls, e) =>
 					this.handleHighlightHover(bls, e),
+				onHighlightContextMenu: (bls, e) =>
+					this.handleHighlightContextMenu(bls, e),
 			},
 		);
 
@@ -446,6 +460,28 @@ export class EpubView extends FileView {
 			settings.hoverSyncMode,
 		);
 
+		// Annotation panel
+		const annoEl = this.containerEl_?.querySelector(
+			".epub-plus-anno-panel",
+		) as HTMLElement | null;
+		if (annoEl) {
+			this.annotationPanel = new AnnotationPanel(
+				annoEl,
+				{
+					onAnnotationClick: (bl) => {
+						void this.renderer?.display(bl.cfiStart);
+					},
+					onAnnotationHover: (bl) => {
+						this.hoverSync?.onPanelEntryHover(bl);
+					},
+					onColorChange: (_bl, _newColor) => {
+						// TODO: update the link color in the source note
+					},
+				},
+				settings.colorPalette,
+			);
+		}
+
 		// Initial scan
 		const backlinks = scanBacklinksForEpub(
 			this.app,
@@ -454,6 +490,7 @@ export class EpubView extends FileView {
 		);
 		this.highlightManager.applyBacklinks(backlinks);
 		this.backlinkPanel?.setBacklinks(backlinks);
+		this.annotationPanel?.setBacklinks(backlinks);
 
 		// Watch for changes
 		this.backlinkWatchRefs = watchBacklinks(
@@ -463,6 +500,7 @@ export class EpubView extends FileView {
 			(updatedBacklinks) => {
 				this.highlightManager?.applyBacklinks(updatedBacklinks);
 				this.backlinkPanel?.setBacklinks(updatedBacklinks);
+				this.annotationPanel?.setBacklinks(updatedBacklinks);
 			},
 		);
 	}
@@ -475,6 +513,7 @@ export class EpubView extends FileView {
 		this.highlightManager?.clearAll();
 		this.highlightManager = null;
 		this.backlinkPanel = null;
+		this.annotationPanel = null;
 		this.hoverSync = null;
 	}
 
@@ -487,8 +526,8 @@ export class EpubView extends FileView {
 			if (backlinks.length > 0) {
 				navigateToBacklink(this.app, backlinks[0]!);
 			}
-		} else if (this.plugin.settings.hoverAction === "preview") {
-			showHighlightPopover(this.app, backlinks, event, this.leaf);
+		} else if (backlinks.length > 0) {
+			this.showInlineNoteEditor(backlinks[0]!, event);
 		}
 	}
 
@@ -497,6 +536,252 @@ export class EpubView extends FileView {
 		_event: MouseEvent,
 	): void {
 		this.hoverSync?.onHighlightHover(backlinks);
+	}
+
+	private showInlineNoteEditor(
+		bl: import("../types").EpubBacklink,
+		event: MouseEvent,
+	): void {
+		// Remove any existing editor
+		const existing = this.contentEl.querySelector(".epub-plus-inline-note");
+		if (existing) existing.remove();
+
+		const editor = this.contentEl.createDiv({ cls: "epub-plus-inline-note" });
+
+		// Position near the click
+		const containerRect = this.contentEl.getBoundingClientRect();
+		const renditionRect = this.renditionEl?.getBoundingClientRect();
+		const x = event.clientX + (renditionRect?.left ?? 0) - containerRect.left;
+		const y = event.clientY + (renditionRect?.top ?? 0) - containerRect.top + 10;
+
+		editor.setCssProps({
+			"position": "absolute",
+			"left": `${Math.max(20, Math.min(x - 150, containerRect.width - 320))}px`,
+			"top": `${y}px`,
+			"z-index": "20",
+		});
+
+		// Header with highlighted text
+		if (bl.text) {
+			const quote = editor.createDiv({ cls: "epub-plus-inline-note-quote" });
+			const stripe = quote.createEl("span", { cls: "epub-plus-inline-note-stripe" });
+			stripe.style.backgroundColor = this.plugin.settings.colorPalette.find(
+				(c) => c.name === bl.color,
+			)?.hex ?? "#ffd400";
+			quote.createEl("span", {
+				text: bl.text.length > 120 ? bl.text.slice(0, 120) + "..." : bl.text,
+			});
+		}
+
+		// Load existing note content from the source file
+		const textarea = editor.createEl("textarea", {
+			cls: "epub-plus-inline-note-textarea",
+			attr: { placeholder: "Add a note...", rows: "3" },
+		});
+
+		// Try to load existing note from the line below the link
+		void this.loadExistingNote(bl).then((note) => {
+			if (note) textarea.value = note;
+		});
+
+		// Buttons
+		const actions = editor.createDiv({ cls: "epub-plus-inline-note-actions" });
+
+		const sourceBtn = actions.createEl("button", {
+			cls: "epub-plus-inline-note-btn",
+			text: "Open note",
+			title: "Open source note",
+		});
+		sourceBtn.addEventListener("click", () => {
+			navigateToBacklink(this.app, bl);
+			editor.remove();
+		});
+
+		const saveBtn = actions.createEl("button", {
+			cls: "epub-plus-inline-note-btn epub-plus-inline-note-save",
+			text: "Save",
+		});
+		saveBtn.addEventListener("click", () => {
+			void this.saveInlineNote(bl, textarea.value);
+			editor.remove();
+		});
+
+		// Focus the textarea
+		setTimeout(() => textarea.focus(), 50);
+
+		// Dismiss on Escape
+		textarea.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				editor.remove();
+			}
+			// Ctrl/Cmd+Enter to save
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				void this.saveInlineNote(bl, textarea.value);
+				editor.remove();
+			}
+			// Stop propagation so epub.js doesn't handle the keypress
+			e.stopPropagation();
+		});
+
+		// Dismiss on click outside
+		const dismiss = (e: MouseEvent) => {
+			if (!editor.contains(e.target as Node)) {
+				editor.remove();
+				document.removeEventListener("mousedown", dismiss);
+			}
+		};
+		setTimeout(() => document.addEventListener("mousedown", dismiss), 100);
+	}
+
+	private async loadExistingNote(
+		bl: import("../types").EpubBacklink,
+	): Promise<string | null> {
+		try {
+			const file = this.app.vault.getAbstractFileByPath(bl.sourcePath);
+			if (!(file instanceof TFile)) return null;
+
+			const content = await this.app.vault.read(file);
+			const lines = content.split("\n");
+			const linkLine = bl.position.line;
+
+			// Find the end of the callout block
+			let blockEnd = linkLine;
+			for (let i = linkLine + 1; i < lines.length; i++) {
+				if (lines[i]!.startsWith("> ")) {
+					blockEnd = i;
+				} else {
+					break;
+				}
+			}
+
+			// Extract note lines from inside the block
+			// (lines that aren't the callout header, the link, or empty ">")
+			const noteParts: string[] = [];
+			for (let i = linkLine + 1; i <= blockEnd; i++) {
+				const line = lines[i]!;
+				if (line.startsWith("> [[") || line.startsWith("> ![[")) continue;
+				if (line.startsWith("> [!")) continue; // callout header
+				if (line === ">") continue;
+				// Strip the "> " prefix
+				noteParts.push(line.startsWith("> ") ? line.slice(2) : line);
+			}
+			return noteParts.length > 0 ? noteParts.join("\n") : null;
+		} catch {
+			return null;
+		}
+	}
+
+	private async saveInlineNote(
+		bl: import("../types").EpubBacklink,
+		note: string,
+	): Promise<void> {
+		try {
+			const file = this.app.vault.getAbstractFileByPath(bl.sourcePath);
+			if (!(file instanceof TFile)) {
+				new Notice("Source note not found");
+				return;
+			}
+
+			const content = await this.app.vault.read(file);
+			const lines = content.split("\n");
+			const linkLine = bl.position.line;
+			const noteText = note.trim();
+			if (!noteText) return;
+
+			// Find the end of the callout/quote block containing the link
+			let blockEnd = linkLine;
+			for (let i = linkLine + 1; i < lines.length; i++) {
+				const line = lines[i]!;
+				if (line.startsWith("> ")) {
+					blockEnd = i;
+				} else {
+					break;
+				}
+			}
+
+			// Remove any existing inline note lines (lines starting with "> "
+			// that are NOT the callout header or the link itself, after the link line)
+			// Then re-add the note as "> " prefixed lines inside the block.
+			const noteLines = noteText.split("\n").map((l) => `> ${l}`);
+
+			// Check if there's already a note inside the block (after the link)
+			// The link is on linkLine. Lines after it within the block that aren't
+			// part of the original callout structure are the note.
+			let existingNoteStart = -1;
+			let existingNoteEnd = -1;
+			for (let i = linkLine + 1; i <= blockEnd; i++) {
+				const line = lines[i]!;
+				// Skip the link line itself (it's part of the callout)
+				if (line.startsWith("> [[") || line.startsWith("> ![[")) continue;
+				if (line === ">") continue; // empty callout line
+				// This is a note line
+				if (existingNoteStart === -1) existingNoteStart = i;
+				existingNoteEnd = i;
+			}
+
+			if (existingNoteStart !== -1 && existingNoteEnd !== -1) {
+				// Replace existing note
+				lines.splice(existingNoteStart, existingNoteEnd - existingNoteStart + 1, ...noteLines);
+			} else {
+				// Append note at the end of the block
+				lines.splice(blockEnd + 1, 0, ...noteLines);
+			}
+
+			await this.app.vault.modify(file, lines.join("\n"));
+			new Notice("Note saved");
+		} catch (e) {
+			new Notice(`Failed to save note: ${String(e)}`);
+		}
+	}
+
+	private handleHighlightContextMenu(
+		backlinks: import("../types").EpubBacklink[],
+		event: MouseEvent,
+	): void {
+		if (backlinks.length === 0) return;
+
+		// Remove any existing context menu
+		const existing = this.contentEl.querySelector(".epub-plus-hl-context-menu");
+		if (existing) existing.remove();
+
+		const menu = this.contentEl.createDiv({ cls: "epub-plus-hl-context-menu" });
+
+		// Position near the click
+		const containerRect = this.contentEl.getBoundingClientRect();
+		// The event coordinates are relative to the iframe, so we need to
+		// translate to the parent container. Get the iframe's offset.
+		const renditionRect = this.renditionEl?.getBoundingClientRect();
+		const x = event.clientX + (renditionRect?.left ?? 0) - containerRect.left;
+		const y = event.clientY + (renditionRect?.top ?? 0) - containerRect.top;
+
+		menu.setCssProps({
+			"position": "absolute",
+			"left": `${x}px`,
+			"top": `${y}px`,
+			"z-index": "20",
+		});
+
+		// Color swatches
+		const palette = this.plugin.settings.colorPalette;
+		for (const color of palette) {
+			const swatch = menu.createDiv({ cls: "epub-plus-anno-swatch" });
+			swatch.style.backgroundColor = color.hex;
+			swatch.title = color.name;
+			swatch.addEventListener("click", (e) => {
+				e.stopPropagation();
+				// TODO: update the link color in the source note
+				// For now, just show a notice
+				new Notice(`Color change to "${color.name}" — edit the link in your note to update the color.`);
+				menu.remove();
+			});
+		}
+
+		// Dismiss on click outside
+		const dismiss = () => {
+			menu.remove();
+			document.removeEventListener("click", dismiss);
+		};
+		setTimeout(() => document.addEventListener("click", dismiss), 50);
 	}
 
 	// ── Event Handlers ──
@@ -555,7 +840,10 @@ export class EpubView extends FileView {
 				const display = bookPercent % 1 === 0
 					? String(bookPercent)
 					: bookPercent.toFixed(1);
-				this.bookPercentEl.textContent = `${display}%`;
+				const timeLeft = this.estimateReadingTime(bookPercent);
+				this.bookPercentEl.textContent = timeLeft
+					? `${display}% \u00b7 ${timeLeft}`
+					: `${display}%`;
 			} else {
 				this.bookPercentEl.textContent = "";
 			}
@@ -624,23 +912,45 @@ export class EpubView extends FileView {
 		const rect = range.getBoundingClientRect();
 		const palette = this.plugin.settings.colorPalette;
 
+		// Capture context before the selection gets cleared
+		const context = this.extractContext(range, text);
+
 		showColorPalettePopup(doc, rect, palette, {
-			onColorSelect: (color: PaletteColor) => {
-				this.createHighlightAnnotation(cfiRange, color);
+			onColorSelect: (color: PaletteColor, style) => {
+				this.createHighlightAnnotation(cfiRange, color, style);
 				selInfo.clearSelection();
-				void this.copyWithColor(cfiRange, text, color.name);
+				void this.copyWithColor(cfiRange, text, color.name, context);
 			},
-			onAddToNote: (color: PaletteColor) => {
-				this.createHighlightAnnotation(cfiRange, color);
+			onAddToNote: (color: PaletteColor, style) => {
+				this.createHighlightAnnotation(cfiRange, color, style);
 				selInfo.clearSelection();
-				void this.addToActiveNote(cfiRange, text, color.name);
+				void this.addToActiveNote(cfiRange, text, color.name, context);
 			},
 		});
+	}
+
+	private extractContext(range: Range, text: string): string {
+		const container = range.commonAncestorContainer;
+		const parentEl = container.nodeType === Node.TEXT_NODE
+			? container.parentElement
+			: container as Element;
+		if (!parentEl) return text;
+
+		const fullText = parentEl.textContent ?? "";
+		const idx = fullText.indexOf(text);
+		if (idx < 0) return text;
+
+		const before = fullText.slice(Math.max(0, idx - 50), idx).trim();
+		const after = fullText.slice(idx + text.length, idx + text.length + 50).trim();
+		return (before ? "..." + before + " " : "")
+			+ text
+			+ (after ? " " + after + "..." : "");
 	}
 
 	private createHighlightAnnotation(
 		cfiRange: string,
 		color: PaletteColor,
+		style: "highlight" | "underline" = "highlight",
 	): void {
 		const rendition = this.renderer?.getRendition();
 		if (!rendition) return;
@@ -651,6 +961,8 @@ export class EpubView extends FileView {
 				{},
 				color.hex,
 				this.plugin.settings.highlightOpacity,
+				undefined,
+				style,
 			);
 		} catch {
 			// ignore CFI resolution errors
@@ -661,8 +973,9 @@ export class EpubView extends FileView {
 		cfiRange: string,
 		text: string,
 		color: string,
+		context?: string,
 	): Promise<void> {
-		const ctx = await this.buildLinkContext(cfiRange, text, color);
+		const ctx = await this.buildLinkContext(cfiRange, text, color, context);
 		await copyLinkToSelection(ctx);
 		new Notice("Link copied to clipboard");
 	}
@@ -671,8 +984,17 @@ export class EpubView extends FileView {
 		cfiRange: string,
 		text: string,
 		color: string,
+		context?: string,
 	): Promise<void> {
-		const ctx = await this.buildLinkContext(cfiRange, text, color);
+		const ctx = await this.buildLinkContext(cfiRange, text, color, context);
+
+		// Try companion note first (frontmatter storage mode)
+		if (this.file && this.plugin.settings.progressStorage === "frontmatter") {
+			const added = await this.appendToCompanionNote(ctx);
+			if (added) return;
+		}
+
+		// Fall back to active markdown note
 		const added = appendLinkToActiveNote(
 			this.app,
 			ctx,
@@ -685,10 +1007,77 @@ export class EpubView extends FileView {
 		}
 	}
 
+	private async appendToCompanionNote(ctx: LinkCopyContext): Promise<boolean> {
+		if (!this.file) return false;
+
+		const companionPath = this.plugin.progressStore
+			.getCompanionNotePath(this.file.path);
+
+		// Build the formatted link text
+		const { parseCfiRange } = await import("../links/epub-link-parser");
+		const { buildEpubSubpath } = await import("../links/epub-link-parser");
+		const { start, end } = parseCfiRange(ctx.cfiRange);
+		const subpath = buildEpubSubpath({
+			cfi: start,
+			end,
+			color: ctx.color,
+			text: ctx.selectedText.slice(0, 100),
+			chapter: ctx.chapterTitle || undefined,
+		});
+
+		const template = this.plugin.settings.copyTemplate;
+		const title = ctx.bookTitle ?? ctx.file.basename;
+		const linkedSelection = `[[${ctx.file.path}${subpath}|${ctx.selectedText}]]`;
+		const link = `[[${ctx.file.path}${subpath}|${ctx.selectedText.slice(0, 60)}]]`;
+		const rawLink = `[[${ctx.file.path}${subpath}]]`;
+
+		let formatted = template;
+		const vars: Record<string, string> = {
+			fileName: ctx.file.basename,
+			title,
+			author: ctx.bookAuthor ?? "",
+			chapter: ctx.chapterTitle,
+			selection: ctx.selectedText,
+			linkedSelection,
+			link,
+			rawLink,
+			color: ctx.color,
+		};
+		for (const [key, value] of Object.entries(vars)) {
+			formatted = formatted.replace(
+				new RegExp(`\\{\\{${key}\\}\\}`, "g"),
+				value,
+			);
+		}
+
+		// Append to the companion note
+		const notePath = companionPath + ".md";
+		let file = this.app.vault.getAbstractFileByPath(notePath);
+
+		if (!(file instanceof TFile)) {
+			// Create the companion note
+			try {
+				file = await this.app.vault.create(notePath, "");
+			} catch {
+				return false;
+			}
+		}
+		if (!(file instanceof TFile)) return false;
+
+		const content = await this.app.vault.read(file);
+		const newContent = content
+			? content.trimEnd() + "\n\n" + formatted + "\n"
+			: formatted + "\n";
+		await this.app.vault.modify(file, newContent);
+		new Notice("Added to companion note");
+		return true;
+	}
+
 	private async buildLinkContext(
 		cfiRange: string,
 		text: string,
 		color: string,
+		context?: string,
 	): Promise<LinkCopyContext> {
 		return {
 			file: this.file!,
@@ -700,7 +1089,75 @@ export class EpubView extends FileView {
 			template: this.plugin.settings.copyTemplate,
 			bookTitle: await this.renderer?.getBookTitle(),
 			bookAuthor: await this.renderer?.getBookAuthor(),
+			context,
 		};
+	}
+
+	/**
+	 * Check if the keyboard event target is a text input — if so,
+	 * page-turn shortcuts should not fire.
+	 */
+	private showFootnotePopup(content: string, event: MouseEvent): void {
+		// Remove any existing popup
+		const existing = this.contentEl.querySelector(".epub-plus-footnote-popup");
+		if (existing) existing.remove();
+
+		const popup = this.contentEl.createDiv({ cls: "epub-plus-footnote-popup" });
+
+		// Position near the click
+		const containerRect = this.contentEl.getBoundingClientRect();
+		const renditionRect = this.renditionEl?.getBoundingClientRect();
+		const x = event.clientX + (renditionRect?.left ?? 0) - containerRect.left;
+		const y = event.clientY + (renditionRect?.top ?? 0) - containerRect.top;
+
+		popup.setCssProps({
+			"position": "absolute",
+			"left": `${Math.max(20, Math.min(x - 150, containerRect.width - 320))}px`,
+			"top": `${Math.max(20, y - 10)}px`,
+			"z-index": "20",
+		});
+
+		const body = popup.createDiv({ cls: "epub-plus-footnote-body" });
+		body.innerHTML = content;
+
+		// Dismiss on click outside
+		const dismiss = (e: MouseEvent) => {
+			if (!popup.contains(e.target as Node)) {
+				popup.remove();
+				document.removeEventListener("mousedown", dismiss);
+			}
+		};
+		setTimeout(() => document.addEventListener("mousedown", dismiss), 100);
+	}
+
+	/**
+	 * Estimate reading time remaining based on current percentage.
+	 * Assumes ~250 words/min, ~250 words per EPUB.js "location" (1024 chars).
+	 */
+	private estimateReadingTime(currentPercent: number): string | null {
+		if (currentPercent >= 99.5) return null;
+		// Each epub.js location is ~1024 characters ≈ ~170 words
+		// Use percentage to estimate remaining time
+		// Average book: ~60,000 words, ~240 min at 250 wpm
+		// Rather than guess total words, use a simpler heuristic:
+		// Estimate based on how long the user has been reading (not available)
+		// So use a rough estimate: total locations × chars_per_loc / chars_per_word / wpm
+		const remaining = (100 - currentPercent) / 100;
+		// Rough: average book ~4 hours total reading time
+		const totalMinutes = 240;
+		const minutesLeft = Math.round(remaining * totalMinutes);
+
+		if (minutesLeft < 1) return "< 1 min left";
+		if (minutesLeft < 60) return `~${minutesLeft} min left`;
+		const hours = Math.floor(minutesLeft / 60);
+		const mins = minutesLeft % 60;
+		if (mins === 0) return `~${hours}h left`;
+		return `~${hours}h ${mins}m left`;
+	}
+
+	private isTyping(e: KeyboardEvent): boolean {
+		const tag = (e.target as HTMLElement)?.tagName;
+		return tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable === true;
 	}
 
 	private nextPage(): void {

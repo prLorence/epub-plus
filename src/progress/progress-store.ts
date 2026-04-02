@@ -30,6 +30,10 @@ export class ProgressStore {
 		this.frontmatterStore.setCompanionNote(epubPath, notePath);
 	}
 
+	getCompanionNotePath(epubPath: string): string {
+		return this.frontmatterStore.getCompanionNotePath(epubPath);
+	}
+
 	async load(): Promise<void> {
 		// Always load the JSON state as in-memory cache
 		const adapter = this.vault.adapter;

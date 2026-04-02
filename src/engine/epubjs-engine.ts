@@ -241,17 +241,28 @@ class EpubJsRendition implements IRendition {
 		color: string,
 		opacity: number,
 		onClick?: (e: MouseEvent) => void,
+		style: "highlight" | "underline" = "highlight",
 	): void {
+		const cssClass = style === "underline" ? "epubjs-ul" : "epubjs-hl";
+		const styles = style === "underline"
+			? {
+				fill: "none",
+				stroke: color,
+				"stroke-width": "2",
+				"stroke-opacity": String(Math.min(opacity + 0.3, 1)),
+			}
+			: {
+				fill: color,
+				"fill-opacity": String(opacity),
+				"mix-blend-mode": "multiply",
+			};
+
 		this.rendition.annotations.highlight(
 			cfiRange,
 			data ?? {},
 			onClick ?? (() => {}),
-			"epubjs-hl",
-			{
-				fill: color,
-				"fill-opacity": String(opacity),
-				"mix-blend-mode": "multiply",
-			},
+			cssClass,
+			styles,
 		);
 	}
 

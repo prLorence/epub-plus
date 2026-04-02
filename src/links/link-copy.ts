@@ -12,6 +12,8 @@ export interface LinkCopyContext {
 	template: string;
 	bookTitle?: string;
 	bookAuthor?: string;
+	/** A few words before and after the selection for context. */
+	context?: string;
 }
 
 export async function copyLinkToSelection(ctx: LinkCopyContext): Promise<string> {
@@ -71,6 +73,7 @@ function buildFormattedLink(ctx: LinkCopyContext): string {
 		fileName: ctx.file.basename,
 		title,
 		author: ctx.bookAuthor ?? "",
+		context: ctx.context ?? "",
 		chapter: ctx.chapterTitle,
 		selection: ctx.selectedText,
 		linkedSelection,
@@ -90,6 +93,7 @@ const TEMPLATE_KEYS = [
 	"link",
 	"rawLink",
 	"color",
+	"context",
 ] as const;
 
 const TEMPLATE_REGEXES = new Map<string, RegExp>(

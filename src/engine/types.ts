@@ -56,6 +56,7 @@ export interface IRendition {
 		color: string,
 		opacity: number,
 		onClick?: (e: MouseEvent) => void,
+		style?: "highlight" | "underline",
 	): void;
 	removeHighlight(cfiRange: string): void;
 	clearHighlights(): void;

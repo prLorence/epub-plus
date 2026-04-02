@@ -3,6 +3,7 @@ export interface ToolbarCallbacks {
 	onNext: () => void;
 	onTocToggle: () => void;
 	onBacklinksToggle?: () => void;
+	onAnnotationsToggle?: () => void;
 	onFontSizeChange: (delta: number) => void;
 	onGoBack?: () => void;
 	onLinkNote?: () => void;
@@ -84,6 +85,15 @@ export class ReaderToolbar {
 				"\u{1F517}",
 				"Toggle backlinks panel",
 				() => this.callbacks.onBacklinksToggle!(),
+			);
+		}
+
+		if (this.callbacks.onAnnotationsToggle) {
+			this.createButton(
+				right,
+				"\u{1F5D2}",
+				"Toggle annotations",
+				() => this.callbacks.onAnnotationsToggle!(),
 			);
 		}
 
