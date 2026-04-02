@@ -247,24 +247,26 @@ export class EpubRenderer {
 		}
 	}
 
+	private static readonly RE_FOOTNOTE_CLASS = /\bfootnote\b|\bendnote\b|\bnoteref\b/i;
+	private static readonly RE_FOOTNOTE_TEXT = /^\[\d+\]$|^\d+$/;
+
 	private interceptFootnoteLinks(doc: Document): void {
 		if (!doc) return;
+		// Skip if this document was already fully processed
+		if ((doc as unknown as { _fnProcessed?: boolean })._fnProcessed) return;
+		(doc as unknown as { _fnProcessed?: boolean })._fnProcessed = true;
+
 		const links = doc.querySelectorAll("a[href]");
 		for (let i = 0; i < links.length; i++) {
 			const link = links[i] as HTMLAnchorElement;
 			if (link.dataset["fnBound"]) continue;
 			link.dataset["fnBound"] = "1";
 
-			// Detect footnote links:
-			// - epub:type="noteref"
-			// - class contains "footnote", "endnote", "note"
-			// - href points to an anchor in the same or different file
-			// - link text is a number like [1], [2], etc.
 			const isFootnote =
 				link.getAttribute("epub:type")?.includes("noteref") ||
 				link.getAttribute("role") === "doc-noteref" ||
-				/\bfootnote\b|\bendnote\b|\bnoteref\b/i.test(link.className) ||
-				/^\[\d+\]$|^\d+$/.test(link.textContent?.trim() ?? "");
+				EpubRenderer.RE_FOOTNOTE_CLASS.test(link.className) ||
+				EpubRenderer.RE_FOOTNOTE_TEXT.test(link.textContent?.trim() ?? "");
 
 			if (!isFootnote) continue;
 

@@ -206,49 +206,38 @@ class EpubJsRendition implements IRendition {
 		}
 	}
 
+	private static readonly RE_PX = /^([\d.]+)\s*px$/i;
+	private static readonly RE_PT = /^([\d.]+)\s*pt$/i;
+	private static readonly RE_REM = /^([\d.]+)\s*rem$/i;
+	private static readonly RE_EM = /^([\d.]+)\s*em$/i;
+	private static readonly NAMED_SIZES: Record<string, string> = {
+		"xx-small": "0.5625rem",
+		"x-small": "0.625rem",
+		"small": "0.8333rem",
+		"medium": "1rem",
+		"large": "1.125rem",
+		"x-large": "1.5rem",
+		"xx-large": "2rem",
+	};
+
 	private toPx(value: string, basePx: number): number | null {
-		const pxMatch = /^([\d.]+)\s*px$/i.exec(value);
-		if (pxMatch) return parseFloat(pxMatch[1]!);
-		const ptMatch = /^([\d.]+)\s*pt$/i.exec(value);
-		if (ptMatch) return parseFloat(ptMatch[1]!) * 1.333;
-		const remMatch = /^([\d.]+)\s*rem$/i.exec(value);
-		if (remMatch) return parseFloat(remMatch[1]!) * basePx;
-		const emMatch = /^([\d.]+)\s*em$/i.exec(value);
-		if (emMatch) return parseFloat(emMatch[1]!) * basePx;
+		let m: RegExpExecArray | null;
+		if ((m = EpubJsRendition.RE_PX.exec(value))) return parseFloat(m[1]!);
+		if ((m = EpubJsRendition.RE_PT.exec(value))) return parseFloat(m[1]!) * 1.333;
+		if ((m = EpubJsRendition.RE_REM.exec(value))) return parseFloat(m[1]!) * basePx;
+		if ((m = EpubJsRendition.RE_EM.exec(value))) return parseFloat(m[1]!) * basePx;
 		return null;
 	}
 
 	private convertToRem(value: string, basePx: number): string | null {
-		// Match px values
-		const pxMatch = /^([\d.]+)\s*px$/i.exec(value);
-		if (pxMatch) {
-			const px = parseFloat(pxMatch[1]!);
-			return `${(px / basePx).toFixed(4)}rem`;
+		let m: RegExpExecArray | null;
+		if ((m = EpubJsRendition.RE_PX.exec(value))) {
+			return `${(parseFloat(m[1]!) / basePx).toFixed(4)}rem`;
 		}
-
-		// Match pt values (1pt = 1.333px)
-		const ptMatch = /^([\d.]+)\s*pt$/i.exec(value);
-		if (ptMatch) {
-			const pt = parseFloat(ptMatch[1]!);
-			const px = pt * 1.333;
-			return `${(px / basePx).toFixed(4)}rem`;
+		if ((m = EpubJsRendition.RE_PT.exec(value))) {
+			return `${(parseFloat(m[1]!) * 1.333 / basePx).toFixed(4)}rem`;
 		}
-
-		// Named sizes
-		const named: Record<string, string> = {
-			"xx-small": "0.5625rem",
-			"x-small": "0.625rem",
-			"small": "0.8333rem",
-			"medium": "1rem",
-			"large": "1.125rem",
-			"x-large": "1.5rem",
-			"xx-large": "2rem",
-		};
-		if (named[value.toLowerCase()]) {
-			return named[value.toLowerCase()]!;
-		}
-
-		return null; // em, %, rem — leave as-is
+		return EpubJsRendition.NAMED_SIZES[value.toLowerCase()] ?? null;
 	}
 
 	// Annotations

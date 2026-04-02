@@ -53,6 +53,8 @@ export class EpubView extends FileView {
 	private navHistory: string[] = [];
 	/** User bookmarks for the current book. */
 	private bookmarks: { cfi: string; label: string; created: string }[] = [];
+	/** Track document-level dismiss handlers for cleanup. */
+	private activeDismissHandlers: Array<() => void> = [];
 	/** When true, the next relocate is from a back/sequential navigation — don't push to history. */
 	private suppressHistoryPush = false;
 	/** The CFI before the most recent non-page-turn navigation. */
@@ -360,6 +362,12 @@ export class EpubView extends FileView {
 	}
 
 	async onUnloadFile(file: TFile): Promise<void> {
+		// Clean up any document-level dismiss handlers
+		for (const cleanup of this.activeDismissHandlers) {
+			cleanup();
+		}
+		this.activeDismissHandlers = [];
+
 		await this.plugin.progressStore.save();
 		this.teardownBacklinks();
 		this.narrowObserver?.disconnect();
@@ -697,13 +705,13 @@ export class EpubView extends FileView {
 		});
 
 		// Dismiss on click outside
-		const dismiss = (e: MouseEvent) => {
+		const dismiss = (e: Event) => {
 			if (!editor.contains(e.target as Node)) {
 				editor.remove();
 				document.removeEventListener("mousedown", dismiss);
 			}
 		};
-		setTimeout(() => document.addEventListener("mousedown", dismiss), 100);
+		this.registerDismissHandler("mousedown", dismiss, 100);
 	}
 
 	private async loadExistingNote(
@@ -854,7 +862,7 @@ export class EpubView extends FileView {
 			menu.remove();
 			document.removeEventListener("click", dismiss);
 		};
-		setTimeout(() => document.addEventListener("click", dismiss), 50);
+		this.registerDismissHandler("click", dismiss, 50);
 	}
 
 	// ── Event Handlers ──
@@ -1291,38 +1299,56 @@ export class EpubView extends FileView {
 		body.appendChild(sanitizeHTMLToDom(content));
 
 		// Dismiss on click outside
-		const dismiss = (e: MouseEvent) => {
+		const dismiss = (e: Event) => {
 			if (!popup.contains(e.target as Node)) {
 				popup.remove();
 				document.removeEventListener("mousedown", dismiss);
 			}
 		};
-		setTimeout(() => document.addEventListener("mousedown", dismiss), 100);
+		this.registerDismissHandler("mousedown", dismiss, 100);
 	}
 
-	/**
-	 * Estimate reading time remaining based on current percentage.
-	 * Assumes ~250 words/min, ~250 words per EPUB.js "location" (1024 chars).
-	 */
+	private lastTimeEstimate = "";
+	private lastTimeEstimatePct = -1;
+
 	private estimateReadingTime(currentPercent: number): string | null {
 		if (currentPercent >= 99.5) return null;
-		// Each epub.js location is ~1024 characters ≈ ~170 words
-		// Use percentage to estimate remaining time
-		// Average book: ~60,000 words, ~240 min at 250 wpm
-		// Rather than guess total words, use a simpler heuristic:
-		// Estimate based on how long the user has been reading (not available)
-		// So use a rough estimate: total locations × chars_per_loc / chars_per_word / wpm
+		// Only recalculate when percentage changes by 1+
+		const bucket = Math.floor(currentPercent);
+		if (bucket === this.lastTimeEstimatePct) return this.lastTimeEstimate || null;
+		this.lastTimeEstimatePct = bucket;
+
 		const remaining = (100 - currentPercent) / 100;
-		// Rough: average book ~4 hours total reading time
 		const totalMinutes = 240;
 		const minutesLeft = Math.round(remaining * totalMinutes);
 
-		if (minutesLeft < 1) return "< 1 min left";
-		if (minutesLeft < 60) return `~${minutesLeft} min left`;
-		const hours = Math.floor(minutesLeft / 60);
-		const mins = minutesLeft % 60;
-		if (mins === 0) return `~${hours}h left`;
-		return `~${hours}h ${mins}m left`;
+		let result: string;
+		if (minutesLeft < 1) result = "< 1 min left";
+		else if (minutesLeft < 60) result = `~${minutesLeft} min left`;
+		else {
+			const hours = Math.floor(minutesLeft / 60);
+			const mins = minutesLeft % 60;
+			result = mins === 0 ? `~${hours}h left` : `~${hours}h ${mins}m left`;
+		}
+		this.lastTimeEstimate = result;
+		return result;
+	}
+
+	/**
+	 * Register a document-level event listener with automatic cleanup on unload.
+	 */
+	private registerDismissHandler(
+		event: string,
+		handler: (e: Event) => void,
+		delay = 50,
+	): void {
+		const wrappedCleanup = () => {
+			document.removeEventListener(event, handler as EventListener);
+			const idx = this.activeDismissHandlers.indexOf(wrappedCleanup);
+			if (idx >= 0) this.activeDismissHandlers.splice(idx, 1);
+		};
+		this.activeDismissHandlers.push(wrappedCleanup);
+		setTimeout(() => document.addEventListener(event, handler as EventListener), delay);
 	}
 
 	private showReaderToast(message: string): void {
