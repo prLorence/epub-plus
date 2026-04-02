@@ -1,4 +1,6 @@
+import { Platform } from "obsidian";
 import type { EpubBacklink, PaletteColor } from "../types";
+import { addLongPress } from "../reader/touch-utils";
 
 export interface AnnotationPanelCallbacks {
 	onAnnotationClick: (backlink: EpubBacklink) => void;
@@ -108,11 +110,14 @@ export class AnnotationPanel {
 		const stripe = entry.createDiv({ cls: "epub-plus-anno-stripe" });
 		stripe.style.backgroundColor = this.colorNameToHex(bl.color);
 
-		// Right-click stripe to change color
+		// Right-click (desktop) or long-press (mobile) to change color
 		stripe.addEventListener("contextmenu", (e) => {
 			e.preventDefault();
 			this.showColorPicker(stripe, bl);
 		});
+		if (Platform.isMobile) {
+			addLongPress(stripe, () => this.showColorPicker(stripe, bl));
+		}
 
 		const content = entry.createDiv({ cls: "epub-plus-anno-content" });
 

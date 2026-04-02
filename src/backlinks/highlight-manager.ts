@@ -1,4 +1,6 @@
+import { Platform } from "obsidian";
 import type { IRendition } from "../engine/types";
+import { addLongPress } from "../reader/touch-utils";
 import type { EpubBacklink, PaletteColor } from "../types";
 
 export interface HighlightCallbacks {
@@ -108,13 +110,24 @@ export class HighlightManager {
 				el.addEventListener("contextmenu", (e: MouseEvent) => {
 					e.preventDefault();
 					e.stopPropagation();
-					// Find which backlinks this highlight belongs to
 					const cfi = el.getAttribute("data-epubcfi") ?? "";
 					const bls = this.backlinkMap.get(cfi);
 					if (bls && this.callbacks.onHighlightContextMenu) {
 						this.callbacks.onHighlightContextMenu(bls, e);
 					}
 				});
+				if (Platform.isMobile) {
+					addLongPress(el, (touch) => {
+						const cfi = el.getAttribute("data-epubcfi") ?? "";
+						const bls = this.backlinkMap.get(cfi);
+						if (bls && this.callbacks.onHighlightContextMenu) {
+							this.callbacks.onHighlightContextMenu(bls, new MouseEvent("contextmenu", {
+								clientX: touch.clientX,
+								clientY: touch.clientY,
+							}));
+						}
+					});
+				}
 			}
 		}
 	}

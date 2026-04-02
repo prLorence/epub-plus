@@ -1066,6 +1066,101 @@
 	transform: translateX(-50%) translateY(0);
 }
 
+/* ── Mobile ── */
+
+/* Touch targets: 44px minimum */
+.epub-plus-root.is-mobile .epub-plus-toolbar {
+	height: 48px;
+	padding: 2px 4px;
+}
+
+.epub-plus-root.is-mobile .epub-plus-toolbar-btn {
+	width: 40px;
+	height: 40px;
+}
+
+.epub-plus-root.is-mobile .epub-plus-toolbar-btn svg {
+	width: 18px;
+	height: 18px;
+}
+
+.epub-plus-root.is-mobile .epub-plus-toc-close,
+.epub-plus-root.is-mobile .epub-plus-bl-close,
+.epub-plus-root.is-mobile .epub-plus-bl-filter-btn,
+.epub-plus-root.is-mobile .epub-plus-anno-close {
+	padding: 8px 10px;
+	font-size: 18px;
+}
+
+.epub-plus-root.is-mobile .epub-plus-anno-swatch {
+	width: 36px;
+	height: 36px;
+}
+
+/* Panel entries: taller for touch */
+.epub-plus-root.is-mobile .epub-plus-toc-item,
+.epub-plus-root.is-mobile .epub-plus-bl-entry,
+.epub-plus-root.is-mobile .epub-plus-anno-entry,
+.epub-plus-root.is-mobile .epub-plus-bm-entry,
+.epub-plus-root.is-mobile .epub-plus-search-result {
+	padding: 12px;
+	min-height: 44px;
+}
+
+/* Panels: wider drawers on mobile */
+.epub-plus-root.is-mobile .epub-plus-toc-panel,
+.epub-plus-root.is-mobile .epub-plus-backlink-panel,
+.epub-plus-root.is-mobile .epub-plus-anno-panel,
+.epub-plus-root.is-mobile .epub-plus-search-panel,
+.epub-plus-root.is-mobile .epub-plus-bm-panel {
+	width: 85vw;
+	max-width: 320px;
+}
+
+/* Popups: constrained to viewport */
+.epub-plus-root.is-mobile .epub-plus-footnote-popup,
+.epub-plus-root.is-mobile .epub-plus-inline-note {
+	width: calc(100vw - 32px);
+	max-width: 300px;
+}
+
+.epub-plus-root.is-mobile .epub-plus-hl-context-menu,
+.epub-plus-root.is-mobile .epub-plus-anno-color-picker {
+	max-width: calc(100vw - 32px);
+}
+
+/* Page turn zones: wider on mobile */
+.epub-plus-root.is-mobile .epub-plus-page-zone {
+	width: 25%;
+}
+
+/* Bottom bar: taller for touch */
+.epub-plus-root.is-mobile .epub-plus-bottom-bar {
+	height: 36px;
+	font-size: 12px;
+}
+
+/* Touch feedback: add :active states alongside :hover */
+.epub-plus-toc-close:active,
+.epub-plus-toc-item:active,
+.epub-plus-toolbar-btn:active,
+.epub-plus-bl-close:active,
+.epub-plus-bl-filter-btn:active,
+.epub-plus-bl-entry:active,
+.epub-plus-anno-close:active,
+.epub-plus-anno-entry:active,
+.epub-plus-anno-swatch:active,
+.epub-plus-bm-entry:active,
+.epub-plus-search-result:active,
+.epub-plus-inline-note-btn:active,
+.epub-plus-multi-backlink-entry:active,
+.epub-plus-palette-add:active,
+.epub-plus-palette-delete:active,
+.epub-plus-embed-link:active {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
 /* ── Utility ── */
 
 .epub-plus-hidden {

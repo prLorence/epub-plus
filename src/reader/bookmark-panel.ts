@@ -1,3 +1,6 @@
+import { Platform } from "obsidian";
+import { addLongPress } from "./touch-utils";
+
 export interface Bookmark {
 	cfi: string;
 	label: string;
@@ -111,6 +114,9 @@ export class BookmarkPanel {
 				e.preventDefault();
 				this.callbacks.onBookmarkDelete(bm);
 			});
+			if (Platform.isMobile) {
+				addLongPress(entry, () => this.callbacks.onBookmarkDelete(bm));
+			}
 		}
 
 		const count = this.bookmarks.length;

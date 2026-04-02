@@ -1,4 +1,4 @@
-import { FileView, TFile, WorkspaceLeaf, Scope, Notice, Modal, Setting, sanitizeHTMLToDom } from "obsidian";
+import { FileView, TFile, WorkspaceLeaf, Scope, Notice, Modal, Setting, sanitizeHTMLToDom, Platform } from "obsidian";
 import type { EventRef } from "obsidian";
 import type { ReaderLocation, SelectionInfo, TocItem } from "../engine/types";
 import { EPUB_VIEW_TYPE } from "../constants";
@@ -308,7 +308,7 @@ export class EpubView extends FileView {
 		}, 300);
 
 		// Vim keybindings
-		if (this.plugin.settings.enableVimBindings && this.renderer) {
+		if (this.plugin.settings.enableVimBindings && this.renderer && !Platform.isMobile) {
 			this.vimBindings = new VimBindings(this.scope!, this.renderer, {
 				onNext: () => this.nextPage(),
 				onPrev: () => this.prevPage(),
@@ -411,6 +411,9 @@ export class EpubView extends FileView {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("epub-plus-root");
+		if (Platform.isMobile) {
+			contentEl.addClass("is-mobile");
+		}
 
 		// Loading screen
 		this.loadingEl = contentEl.createDiv({ cls: "epub-plus-loading" });
@@ -440,6 +443,11 @@ export class EpubView extends FileView {
 		prevZone.addEventListener("click", () => this.prevPage());
 		const nextZone = this.renditionEl.createDiv({ cls: "epub-plus-page-zone epub-plus-page-zone-next" });
 		nextZone.addEventListener("click", () => this.nextPage());
+
+		// Swipe navigation on mobile
+		if (Platform.isMobile) {
+			this.setupSwipeNavigation(this.renditionEl);
+		}
 
 		const bottomBar = readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
 		this.progressFillEl = bottomBar.createDiv({ cls: "epub-plus-progress-fill" });
@@ -1342,13 +1350,49 @@ export class EpubView extends FileView {
 		handler: (e: Event) => void,
 		delay = 50,
 	): void {
+		// On mobile, also bind touchstart for faster dismiss
+		const events = Platform.isMobile && (event === "mousedown" || event === "click")
+			? [event, "touchstart"]
+			: [event];
+
 		const wrappedCleanup = () => {
-			document.removeEventListener(event, handler as EventListener);
+			for (const ev of events) {
+				document.removeEventListener(ev, handler as EventListener);
+			}
 			const idx = this.activeDismissHandlers.indexOf(wrappedCleanup);
 			if (idx >= 0) this.activeDismissHandlers.splice(idx, 1);
 		};
 		this.activeDismissHandlers.push(wrappedCleanup);
-		setTimeout(() => document.addEventListener(event, handler as EventListener), delay);
+		setTimeout(() => {
+			for (const ev of events) {
+				document.addEventListener(ev, handler as EventListener);
+			}
+		}, delay);
+	}
+
+	private setupSwipeNavigation(el: HTMLElement): void {
+		let startX = 0;
+		let startY = 0;
+		let startTime = 0;
+
+		el.addEventListener("touchstart", (e) => {
+			if (e.touches.length !== 1) return;
+			startX = e.touches[0]!.clientX;
+			startY = e.touches[0]!.clientY;
+			startTime = Date.now();
+		}, { passive: true });
+
+		el.addEventListener("touchend", (e) => {
+			if (e.changedTouches.length !== 1) return;
+			const dx = e.changedTouches[0]!.clientX - startX;
+			const dy = e.changedTouches[0]!.clientY - startY;
+			const dt = Date.now() - startTime;
+			// Horizontal, fast enough, far enough
+			if (Math.abs(dx) > 50 && Math.abs(dy) < Math.abs(dx) && dt < 500) {
+				if (dx < 0) this.nextPage();
+				else this.prevPage();
+			}
+		}, { passive: true });
 	}
 
 	private showReaderToast(message: string): void {
