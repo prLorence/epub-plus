@@ -64,6 +64,23 @@ export class NativeEngine implements IBookEngine {
 		}
 	}
 
+	getSpineHrefs(): string[] {
+		if (!this.book) return [];
+		const hrefs: string[] = [];
+		this.book.spine.each((section: { href: string }) => {
+			hrefs.push(section.href);
+		});
+		return hrefs;
+	}
+
+	getArchive(): import("./types").EpubArchive | null {
+		if (!this.book?.archive) return null;
+		return {
+			request: (url: string, type: string) =>
+				this.book!.archive.request(url, type) as Promise<string>,
+		};
+	}
+
 	destroy(): void {
 		if (this.book) {
 			this.book.destroy();

@@ -13,6 +13,10 @@ export interface IBookEngine {
 	getToc(): Promise<TocItem[]>;
 	getMetadata(): Promise<BookMetadata>;
 	getRange(cfiRange: string): Promise<Range | null>;
+	/** Access the underlying archive for fetching raw EPUB resources. */
+	getArchive(): EpubArchive | null;
+	/** Get all spine item hrefs in reading order. */
+	getSpineHrefs(): string[];
 	destroy(): void;
 }
 
@@ -99,6 +103,12 @@ export interface SelectionInfo {
 export interface ContentAccessor {
 	document: Document;
 	window: Window;
+}
+
+// ── Archive Access ──
+
+export interface EpubArchive {
+	request(url: string, type: string): Promise<string>;
 }
 
 // ── Text Resolver (for embed extraction) ──

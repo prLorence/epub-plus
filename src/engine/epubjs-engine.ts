@@ -17,6 +17,7 @@ import type {
 	SelectionInfo,
 	ContentAccessor,
 	ITextResolver,
+	EpubArchive,
 } from "./types";
 
 // ── Book Engine ──
@@ -69,6 +70,23 @@ export class EpubJsEngine implements IBookEngine {
 		} catch {
 			return null;
 		}
+	}
+
+	getSpineHrefs(): string[] {
+		if (!this.book) return [];
+		const hrefs: string[] = [];
+		this.book.spine.each((section: { href: string }) => {
+			hrefs.push(section.href);
+		});
+		return hrefs;
+	}
+
+	getArchive(): EpubArchive | null {
+		if (!this.book?.archive) return null;
+		return {
+			request: (url: string, type: string) =>
+				this.book!.archive.request(url, type) as Promise<string>,
+		};
 	}
 
 	destroy(): void {

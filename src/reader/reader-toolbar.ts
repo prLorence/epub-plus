@@ -1,9 +1,13 @@
+import { setIcon } from "obsidian";
+
 export interface ToolbarCallbacks {
 	onPrev: () => void;
 	onNext: () => void;
 	onTocToggle: () => void;
 	onBacklinksToggle?: () => void;
 	onAnnotationsToggle?: () => void;
+	onSearchToggle?: () => void;
+	onBookmark?: () => void;
 	onFontSizeChange: (delta: number) => void;
 	onGoBack?: () => void;
 	onLinkNote?: () => void;
@@ -46,24 +50,22 @@ export class ReaderToolbar {
 		});
 
 		// Left: TOC toggle
-		this.createButton(left, "\u2630", "Table of contents", () =>
-			this.callbacks.onTocToggle(),
+		this.createButton(left, "list", "Table of contents", () =>
+			this.callbacks.onTocToggle(), true,
 		);
 
 		// Left: Back button (hidden until a link is followed)
 		if (this.callbacks.onGoBack) {
 			this.backBtn = this.createButton(
-				left,
-				"\u21A9",
-				"Go back (Alt+\u2190)",
-				() => this.callbacks.onGoBack!(),
+				left, "undo-2", "Go back (Alt+\u2190)",
+				() => this.callbacks.onGoBack!(), true,
 			);
 			this.backBtn.addClass("epub-plus-hidden");
 		}
 
 		// Left: Previous page
-		this.createButton(left, "\u2190", "Previous page", () =>
-			this.callbacks.onPrev(),
+		this.createButton(left, "chevron-left", "Previous page", () =>
+			this.callbacks.onPrev(), true,
 		);
 
 		// Center: chapter name only
@@ -71,57 +73,66 @@ export class ReaderToolbar {
 			cls: "epub-plus-toolbar-chapter",
 		});
 
-		// Right: font controls, backlinks toggle, next
-		this.createButton(right, "A\u2212", "Decrease font size", () =>
-			this.callbacks.onFontSizeChange(-1),
+		// Right: font controls
+		this.createButton(right, "a-arrow-down", "Decrease font size", () =>
+			this.callbacks.onFontSizeChange(-1), true,
 		);
-		this.createButton(right, "A+", "Increase font size", () =>
-			this.callbacks.onFontSizeChange(1),
+		this.createButton(right, "a-arrow-up", "Increase font size", () =>
+			this.callbacks.onFontSizeChange(1), true,
 		);
 
-		if (this.callbacks.onBacklinksToggle) {
-			this.createButton(
-				right,
-				"\u{1F517}",
-				"Toggle backlinks panel",
-				() => this.callbacks.onBacklinksToggle!(),
+		if (this.callbacks.onSearchToggle) {
+			this.createButton(right, "search", "Search in book (Ctrl+F)", () =>
+				this.callbacks.onSearchToggle!(), true,
+			);
+		}
+
+		if (this.callbacks.onBookmark) {
+			this.createButton(right, "bookmark", "Bookmarks (Ctrl+D to add)", () =>
+				this.callbacks.onBookmark!(), true,
 			);
 		}
 
 		if (this.callbacks.onAnnotationsToggle) {
-			this.createButton(
-				right,
-				"\u{1F5D2}",
-				"Toggle annotations",
-				() => this.callbacks.onAnnotationsToggle!(),
+			this.createButton(right, "highlighter", "Toggle annotations", () =>
+				this.callbacks.onAnnotationsToggle!(), true,
+			);
+		}
+
+		if (this.callbacks.onBacklinksToggle) {
+			this.createButton(right, "link", "Toggle backlinks panel", () =>
+				this.callbacks.onBacklinksToggle!(), true,
 			);
 		}
 
 		if (this.callbacks.onLinkNote) {
-			this.createButton(
-				right,
-				"\u{1F4CE}",
-				"Link companion note",
-				() => this.callbacks.onLinkNote!(),
+			this.createButton(right, "file-symlink", "Link companion note", () =>
+				this.callbacks.onLinkNote!(), true,
 			);
 		}
 
-		this.createButton(right, "\u2192", "Next page", () =>
-			this.callbacks.onNext(),
+		// Right: Next page
+		this.createButton(right, "chevron-right", "Next page", () =>
+			this.callbacks.onNext(), true,
 		);
 	}
 
 	private createButton(
 		parent: HTMLElement,
-		text: string,
+		iconOrText: string,
 		title: string,
 		onClick: () => void,
+		useIcon = false,
 	): HTMLElement {
 		const btn = parent.createEl("button", {
 			cls: "epub-plus-toolbar-btn",
-			text,
 			title,
 		});
+		if (useIcon) {
+			setIcon(btn, iconOrText);
+		} else {
+			btn.textContent = iconOrText;
+		}
 		btn.addEventListener("click", onClick);
 		return btn;
 	}

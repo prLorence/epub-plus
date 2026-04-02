@@ -12,6 +12,7 @@ export class ProgressStore {
 	private savePromise: Promise<void> | null = null;
 	private frontmatterStore: FrontmatterProgressStore;
 	private storageMethod: StorageMethod;
+	private fmSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(
 		private vault: Vault,
@@ -115,8 +116,12 @@ export class ProgressStore {
 		this.dirty = true;
 
 		if (this.storageMethod === "frontmatter") {
-			// Debounce frontmatter writes to avoid excessive file modifications
-			void this.frontmatterStore.set(filePath, progress);
+			// Debounce frontmatter writes — only write every 5 seconds
+			if (this.fmSaveTimer) clearTimeout(this.fmSaveTimer);
+			this.fmSaveTimer = setTimeout(() => {
+				this.fmSaveTimer = null;
+				void this.frontmatterStore.set(filePath, progress);
+			}, 5000);
 		}
 	}
 

@@ -149,6 +149,14 @@ export class EpubRenderer {
 		return this.rendition;
 	}
 
+	getEngine(): IBookEngine | null {
+		return this.engine;
+	}
+
+	getCachedToc(): TocItem[] {
+		return this.cachedToc ?? [];
+	}
+
 	getCurrentHref(): string | null {
 		return this.rendition?.getCurrentLocation()?.href ?? null;
 	}
@@ -266,7 +274,7 @@ export class EpubRenderer {
 				void this.loadFootnoteContent(link.getAttribute("href") ?? "")
 					.then((content) => {
 						if (content && this.callbacks.onFootnoteClick) {
-							this.callbacks.onFootnoteClick(content, e as MouseEvent);
+							this.callbacks.onFootnoteClick(content, e);
 						}
 					});
 			});
@@ -277,13 +285,13 @@ export class EpubRenderer {
 		if (!this.engine || !href) return null;
 
 		try {
-			// href could be "#id" (same section) or "file.xhtml#id" (different section)
 			const hashIdx = href.indexOf("#");
 			const targetId = hashIdx >= 0 ? href.slice(hashIdx + 1) : "";
+			const targetFile = hashIdx > 0 ? href.slice(0, hashIdx) : "";
 
 			if (!targetId) return null;
 
-			// Try to find the element in the currently rendered content
+			// Try current section first
 			const contents = this.rendition?.getContents() ?? [];
 			for (const content of contents) {
 				const el = content.document.getElementById(targetId);
@@ -292,12 +300,49 @@ export class EpubRenderer {
 				}
 			}
 
-			// If not in current section, we'd need to load the target section.
-			// For now, return null — the link will navigate normally via epub.js.
+			// Cross-section: fetch the target file from the EPUB archive
+			if (targetFile) {
+				return await this.loadFootnoteFromArchive(targetFile, targetId);
+			}
+
 			return null;
 		} catch {
 			return null;
 		}
+	}
+
+	private async loadFootnoteFromArchive(
+		fileHref: string,
+		targetId: string,
+	): Promise<string | null> {
+		if (!this.engine) return null;
+
+		const archive = this.engine.getArchive();
+		if (!archive) return null;
+
+		// Resolve relative to the current section's directory
+		const currentDir = this.lastHref.split("/").slice(0, -1).join("/");
+		const candidates = [
+			fileHref,
+			currentDir ? `${currentDir}/${fileHref}` : fileHref,
+			fileHref.replace(/^\.\//, currentDir ? `${currentDir}/` : ""),
+		];
+
+		for (const href of candidates) {
+			try {
+				const xhtml = await archive.request(href, "text");
+				if (!xhtml || typeof xhtml !== "string") continue;
+
+				const parser = new DOMParser();
+				const doc = parser.parseFromString(xhtml, "application/xhtml+xml");
+				const el = doc.getElementById(targetId);
+				if (el) return el.innerHTML;
+			} catch {
+				continue;
+			}
+		}
+
+		return null;
 	}
 
 	updateSettings(settings: EpubPlusSettings): void {

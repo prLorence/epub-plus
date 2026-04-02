@@ -1,4 +1,4 @@
-import { FileView, TFile, WorkspaceLeaf, Scope, Notice, Modal, Setting } from "obsidian";
+import { FileView, TFile, WorkspaceLeaf, Scope, Notice, Modal, Setting, sanitizeHTMLToDom } from "obsidian";
 import type { EventRef } from "obsidian";
 import type { ReaderLocation, SelectionInfo, TocItem } from "../engine/types";
 import { EPUB_VIEW_TYPE } from "../constants";
@@ -22,6 +22,8 @@ import { AnnotationPanel } from "../backlinks/annotation-panel";
 import { HoverSyncBridge } from "../backlinks/hover-sync";
 import { navigateToBacklink } from "../backlinks/hover-popover";
 import { showColorPalettePopup } from "./color-palette";
+import { SearchPanel } from "./search-panel";
+import { BookmarkPanel } from "./bookmark-panel";
 import type { PaletteColor } from "../types";
 import type EpubPlusPlugin from "../main";
 
@@ -33,6 +35,8 @@ export class EpubView extends FileView {
 	private highlightManager: HighlightManager | null = null;
 	private backlinkPanel: BacklinkPanel | null = null;
 	private annotationPanel: AnnotationPanel | null = null;
+	private searchPanel: SearchPanel | null = null;
+	private bookmarkPanel: BookmarkPanel | null = null;
 	private hoverSync: HoverSyncBridge | null = null;
 	private backlinkWatchRefs: EventRef[] = [];
 	private pendingCfi: string | null = null;
@@ -47,6 +51,8 @@ export class EpubView extends FileView {
 	private bookPercentEl: HTMLElement | null = null;
 	/** Navigation history stack for back navigation (stores CFIs). */
 	private navHistory: string[] = [];
+	/** User bookmarks for the current book. */
+	private bookmarks: { cfi: string; label: string; created: string }[] = [];
 	/** When true, the next relocate is from a back/sequential navigation — don't push to history. */
 	private suppressHistoryPush = false;
 	/** The CFI before the most recent non-page-turn navigation. */
@@ -87,6 +93,22 @@ export class EpubView extends FileView {
 			this.pendingSelection = null;
 			// Don't consume the event — let Obsidian handle Escape too
 			return true;
+		});
+
+		// Ctrl/Cmd+D — toggle bookmark
+		this.scope.register(["Mod"], "d", (e) => {
+			if (this.isTyping(e)) return true;
+			e.preventDefault();
+			this.toggleBookmark();
+			return false;
+		});
+
+		// Ctrl/Cmd+F — search in book
+		this.scope.register(["Mod"], "f", (e) => {
+			if (this.isTyping(e)) return true;
+			e.preventDefault();
+			this.searchPanel?.toggle();
+			return false;
 		});
 
 		// Alt+Left arrow to go back after clicking a link
@@ -146,7 +168,12 @@ export class EpubView extends FileView {
 		return EPUB_VIEW_TYPE;
 	}
 
+	private currentChapterForTab = "";
+
 	getDisplayText(): string {
+		if (this.currentChapterForTab) {
+			return `${this.file?.basename ?? "EPUB"} — ${this.currentChapterForTab}`;
+		}
 		return this.file?.basename ?? "EPUB";
 	}
 
@@ -247,6 +274,8 @@ export class EpubView extends FileView {
 				onTocToggle: () => this.tocPanel?.toggle(),
 				onBacklinksToggle: () => this.backlinkPanel?.toggle(),
 				onAnnotationsToggle: () => this.annotationPanel?.toggle(),
+				onSearchToggle: () => this.searchPanel?.toggle(),
+				onBookmark: () => this.bookmarkPanel?.toggle(),
 				onFontSizeChange: (delta) => this.changeFontSize(delta),
 				onGoBack: () => this.goBack(),
 				onLinkNote: () => this.linkCompanionNote(),
@@ -282,6 +311,48 @@ export class EpubView extends FileView {
 				onNext: () => this.nextPage(),
 				onPrev: () => this.prevPage(),
 			});
+		}
+
+		// Bookmark panel
+		const bmEl = this.containerEl_?.querySelector(
+			".epub-plus-bm-panel",
+		) as HTMLElement | null;
+		if (bmEl) {
+			this.bookmarkPanel = new BookmarkPanel(bmEl, {
+				onBookmarkClick: (bm) => {
+					void this.renderer?.display(bm.cfi);
+				},
+				onBookmarkDelete: (bm) => {
+					this.bookmarks = this.bookmarks.filter(
+						(b) => b.cfi !== bm.cfi,
+					);
+					this.bookmarkPanel?.setBookmarks(this.bookmarks);
+					void this.saveBookmarks();
+					new Notice("Bookmark removed");
+				},
+			});
+		}
+
+		// Load bookmarks
+		void this.loadBookmarks().then(() => {
+			this.bookmarkPanel?.setBookmarks(this.bookmarks);
+		});
+
+		// Search panel
+		const searchEl = this.containerEl_?.querySelector(
+			".epub-plus-search-panel",
+		) as HTMLElement | null;
+		if (searchEl && this.renderer) {
+			this.searchPanel = new SearchPanel(
+				searchEl,
+				this.renderer.getEngine()!,
+				{
+					onResultClick: (result) => {
+						void this.renderer?.display(result.href);
+					},
+					onClose: () => { /* panel handles its own visibility */ },
+				},
+			);
 		}
 
 		// Phase 2: Backlink highlighting
@@ -376,6 +447,8 @@ export class EpubView extends FileView {
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
 		this.containerEl_.createDiv({ cls: "epub-plus-anno-panel" });
+		this.containerEl_.createDiv({ cls: "epub-plus-search-panel" });
+		this.containerEl_.createDiv({ cls: "epub-plus-bm-panel" });
 
 		// Observe width changes to toggle narrow/very-narrow modes.
 		// Track previous breakpoint to avoid redundant DOM mutations.
@@ -825,6 +898,13 @@ export class EpubView extends FileView {
 		const displayed = location.displayed;
 		this.toolbar?.updateChapter(chapterName);
 
+		// Update tab title with chapter name
+		if (chapterName !== this.currentChapterForTab) {
+			this.currentChapterForTab = chapterName;
+			// Trigger Obsidian's tab title refresh
+			(this.leaf as unknown as { updateHeader?: () => void }).updateHeader?.();
+		}
+
 		// Update bottom progress bar
 		if (this.progressFillEl) {
 			this.progressFillEl.setCssProps({
@@ -896,7 +976,33 @@ export class EpubView extends FileView {
 		if (!text || !this.file) return;
 
 		this.pendingSelection = { cfiRange, text, selection: selInfo };
+
+		// Quick-add mode: skip popup, use default color instantly
+		if (this.plugin.settings.autoCopyOnHighlight) {
+			const defaultColor = this.plugin.settings.colorPalette.find(
+				(c) => c.name === this.plugin.settings.defaultHighlightColor,
+			) ?? this.plugin.settings.colorPalette[0];
+			if (defaultColor) {
+				this.createHighlightAnnotation(cfiRange, defaultColor);
+				const context = this.extractContextFromSelection(selInfo, text);
+				void this.copyWithColor(cfiRange, text, defaultColor.name, context);
+				selInfo.clearSelection();
+				this.pendingSelection = null;
+				return;
+			}
+		}
+
 		this.showSelectionPopup(selInfo, cfiRange, text);
+	}
+
+	private extractContextFromSelection(selInfo: SelectionInfo, text: string): string {
+		try {
+			const sel = selInfo.window.getSelection();
+			if (!sel || sel.rangeCount === 0) return text;
+			return this.extractContext(sel.getRangeAt(0), text);
+		} catch {
+			return text;
+		}
 	}
 
 	private showSelectionPopup(
@@ -977,7 +1083,7 @@ export class EpubView extends FileView {
 	): Promise<void> {
 		const ctx = await this.buildLinkContext(cfiRange, text, color, context);
 		await copyLinkToSelection(ctx);
-		new Notice("Link copied to clipboard");
+		this.showReaderToast("\u2713 Copied to clipboard");
 	}
 
 	private async addToActiveNote(
@@ -1069,7 +1175,7 @@ export class EpubView extends FileView {
 			? content.trimEnd() + "\n\n" + formatted + "\n"
 			: formatted + "\n";
 		await this.app.vault.modify(file, newContent);
-		new Notice("Added to companion note");
+		this.showReaderToast("\u2713 Added to note");
 		return true;
 	}
 
@@ -1097,6 +1203,70 @@ export class EpubView extends FileView {
 	 * Check if the keyboard event target is a text input — if so,
 	 * page-turn shortcuts should not fire.
 	 */
+	private toggleBookmark(): void {
+		const loc = this.renderer?.getRendition()?.getCurrentLocation();
+		if (!loc?.cfi || !this.file) return;
+
+		const chapter = this.renderer?.getCurrentChapterTitle() ?? "";
+		const percent = this.renderer?.getPercentage() ?? 0;
+
+		// Check if already bookmarked at this CFI
+		const existing = this.bookmarks.findIndex((b) => b.cfi === loc.cfi);
+		if (existing >= 0) {
+			this.bookmarks.splice(existing, 1);
+			this.showReaderToast("\u{1F516} Bookmark removed");
+		} else {
+			this.bookmarks.push({
+				cfi: loc.cfi,
+				label: `${chapter} (${percent}%)`,
+				created: new Date().toISOString(),
+			});
+			this.showReaderToast("\u{1F516} Bookmark added");
+		}
+
+		this.bookmarkPanel?.setBookmarks(this.bookmarks);
+		void this.saveBookmarks();
+	}
+
+	private async saveBookmarks(): Promise<void> {
+		if (!this.file) return;
+		if (this.plugin.settings.progressStorage !== "frontmatter") return;
+
+		const companionPath = this.plugin.progressStore
+			.getCompanionNotePath(this.file.path) + ".md";
+		const file = this.app.vault.getAbstractFileByPath(companionPath);
+		if (!(file instanceof TFile)) return;
+
+		await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+			fm["epub-bookmarks"] = this.bookmarks.map((b) => ({
+				cfi: b.cfi,
+				label: b.label,
+				created: b.created,
+			}));
+		});
+	}
+
+	private async loadBookmarks(): Promise<void> {
+		if (!this.file) return;
+		if (this.plugin.settings.progressStorage !== "frontmatter") return;
+
+		const companionPath = this.plugin.progressStore
+			.getCompanionNotePath(this.file.path) + ".md";
+		const file = this.app.vault.getAbstractFileByPath(companionPath);
+		if (!(file instanceof TFile)) return;
+
+		const cache = this.app.metadataCache.getFileCache(file);
+		const fm = cache?.frontmatter;
+		if (!fm) return;
+
+		const saved = fm["epub-bookmarks"] as
+			| Array<{ cfi: string; label: string; created: string }>
+			| undefined;
+		if (saved && Array.isArray(saved)) {
+			this.bookmarks = saved;
+		}
+	}
+
 	private showFootnotePopup(content: string, event: MouseEvent): void {
 		// Remove any existing popup
 		const existing = this.contentEl.querySelector(".epub-plus-footnote-popup");
@@ -1118,7 +1288,7 @@ export class EpubView extends FileView {
 		});
 
 		const body = popup.createDiv({ cls: "epub-plus-footnote-body" });
-		body.innerHTML = content;
+		body.appendChild(sanitizeHTMLToDom(content));
 
 		// Dismiss on click outside
 		const dismiss = (e: MouseEvent) => {
@@ -1153,6 +1323,19 @@ export class EpubView extends FileView {
 		const mins = minutesLeft % 60;
 		if (mins === 0) return `~${hours}h left`;
 		return `~${hours}h ${mins}m left`;
+	}
+
+	private showReaderToast(message: string): void {
+		const existing = this.contentEl.querySelector(".epub-plus-toast");
+		if (existing) existing.remove();
+
+		const toast = this.contentEl.createDiv({ cls: "epub-plus-toast" });
+		toast.textContent = message;
+		setTimeout(() => toast.addClass("epub-plus-toast-visible"), 10);
+		setTimeout(() => {
+			toast.removeClass("epub-plus-toast-visible");
+			setTimeout(() => toast.remove(), 300);
+		}, 1500);
 	}
 
 	private isTyping(e: KeyboardEvent): boolean {
