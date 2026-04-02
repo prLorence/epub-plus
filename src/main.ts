@@ -31,7 +31,11 @@ export default class EpubPlusPlugin extends Plugin {
 		);
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
 
-		this.progressStore = new ProgressStore(this.app.vault);
+		this.progressStore = new ProgressStore(
+			this.app.vault,
+			this.app,
+			this.settings.progressStorage,
+		);
 		await this.progressStore.load();
 
 		// Prune stale entries after layout is ready (vault fully indexed)
@@ -129,7 +133,6 @@ export default class EpubPlusPlugin extends Plugin {
 					return;
 				}
 
-				// No existing leaf — open in a new tab (split right)
 				const leaf = this.app.workspace.getLeaf("tab");
 				await leaf.openFile(resolved, {
 					eState: subpath ? { subpath } : undefined,

@@ -10,6 +10,7 @@ export interface CopyTemplate {
 
 export interface EpubPlusSettings {
 	// Reader
+	engineType: "epubjs" | "native" | "zotero";
 	readingMode: "paginated" | "scrolled";
 	fontSize: number;
 	fontFamily: string;
@@ -20,6 +21,7 @@ export interface EpubPlusSettings {
 	showTocOnOpen: boolean;
 	autoSaveProgress: boolean;
 	progressSyncPages: number;
+	progressStorage: "frontmatter" | "json";
 
 	// Backlink highlighting
 	enableBacklinkHighlighting: boolean;
@@ -54,6 +56,7 @@ const DEFAULT_TEMPLATE =
 	"> [!quote|{{color}}] {{chapter}}\n> {{linkedSelection}}";
 
 export const DEFAULT_SETTINGS: EpubPlusSettings = {
+	engineType: "epubjs",
 	readingMode: "paginated",
 	fontSize: 18,
 	fontFamily: "",
@@ -64,6 +67,7 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	showTocOnOpen: false,
 	autoSaveProgress: true,
 	progressSyncPages: 5,
+	progressStorage: "frontmatter",
 
 	enableBacklinkHighlighting: true,
 	highlightOpacity: 0.3,
@@ -125,6 +129,27 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 
 	private renderReaderSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("Reader").setHeading();
+
+		new Setting(containerEl)
+			.setName("Rendering engine")
+			.setDesc(
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- Product names
+				"epub.js: stable, standard rendering. Native: experimental, preserves book styling better. Requires reopening the book.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						epubjs: "epub.js (stable)",
+						native: "Native (experimental)",
+						zotero: "Zotero reader (coming soon)",
+					})
+					.setValue(this.plugin.settings.engineType)
+					.onChange(async (v) => {
+						this.plugin.settings.engineType =
+							v as EpubPlusSettings["engineType"];
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName("Reading mode")
@@ -511,6 +536,25 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 
 	private renderProgressSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("Progress").setHeading();
+
+		new Setting(containerEl)
+			.setName("Storage method")
+			.setDesc(
+				"Frontmatter: stores progress in a companion note next to the book. JSON: stores in a single .epub-reading-state.json file.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						frontmatter: "Companion note (frontmatter)",
+						json: "Central JSON file",
+					})
+					.setValue(this.plugin.settings.progressStorage)
+					.onChange(async (v) => {
+						this.plugin.settings.progressStorage =
+							v as EpubPlusSettings["progressStorage"];
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName("Auto-save reading progress")

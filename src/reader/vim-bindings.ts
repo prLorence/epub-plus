@@ -1,6 +1,11 @@
 import type { Scope } from "obsidian";
 import type { EpubRenderer } from "./epub-renderer";
 
+export interface VimBindingsCallbacks {
+	onNext: () => void;
+	onPrev: () => void;
+}
+
 /**
  * Optional vim-style keybindings for the EPUB reader.
  * Only active when the EpubView has focus (via Obsidian's Scope system).
@@ -11,6 +16,7 @@ export class VimBindings {
 	constructor(
 		private scope: Scope,
 		private renderer: EpubRenderer,
+		private callbacks: VimBindingsCallbacks,
 	) {
 		this.register();
 	}
@@ -18,21 +24,21 @@ export class VimBindings {
 	private register(): void {
 		// j/k — next/prev page
 		this.scope.register([], "j", () => {
-			void this.renderer.next();
+			this.callbacks.onNext();
 			return false;
 		});
 		this.scope.register([], "k", () => {
-			void this.renderer.prev();
+			this.callbacks.onPrev();
 			return false;
 		});
 
 		// h/l — prev/next page
 		this.scope.register([], "h", () => {
-			void this.renderer.prev();
+			this.callbacks.onPrev();
 			return false;
 		});
 		this.scope.register([], "l", () => {
-			void this.renderer.next();
+			this.callbacks.onNext();
 			return false;
 		});
 
@@ -40,9 +46,10 @@ export class VimBindings {
 		this.scope.register(["Shift"], "g", () => {
 			const rendition = this.renderer.getRendition();
 			if (rendition) {
-				void rendition.display(
-					rendition.book.spine.last()?.href,
-				);
+				const endHref = rendition.getSpineEndHref();
+				if (endHref) {
+					void rendition.display(endHref);
+				}
 			}
 			return false;
 		});

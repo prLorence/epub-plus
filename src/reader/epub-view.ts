@@ -1,6 +1,6 @@
-import { FileView, TFile, WorkspaceLeaf, Scope, Notice } from "obsidian";
+import { FileView, TFile, WorkspaceLeaf, Scope, Notice, Modal, Setting } from "obsidian";
 import type { EventRef } from "obsidian";
-import type { Location, Contents } from "epubjs";
+import type { ReaderLocation, SelectionInfo, TocItem } from "../engine/types";
 import { EPUB_VIEW_TYPE } from "../constants";
 import { EpubRenderer } from "./epub-renderer";
 import { TocPanel } from "./toc-panel";
@@ -44,11 +44,18 @@ export class EpubView extends FileView {
 	private pageTurnsSinceSave = 0;
 	private narrowObserver: ResizeObserver | null = null;
 	private progressFillEl: HTMLElement | null = null;
-	private pageInfoEl: HTMLElement | null = null;
+	private chapterPageEl: HTMLElement | null = null;
+	private bookPercentEl: HTMLElement | null = null;
+	/** Navigation history stack for back navigation (stores CFIs). */
+	private navHistory: string[] = [];
+	/** When true, the next relocate is from a back/sequential navigation — don't push to history. */
+	private suppressHistoryPush = false;
+	/** The CFI before the most recent non-page-turn navigation. */
+	private lastCfi: string | null = null;
 	private pendingSelection: {
 		cfiRange: string;
 		text: string;
-		contents: Contents;
+		selection: SelectionInfo;
 	} | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
@@ -58,25 +65,52 @@ export class EpubView extends FileView {
 
 		this.scope = new Scope(this.app.scope);
 		this.scope.register([], "ArrowRight", () => {
-			void this.renderer?.next();
+			this.nextPage();
 			return false;
 		});
 		this.scope.register([], "ArrowLeft", () => {
-			void this.renderer?.prev();
+			this.prevPage();
 			return false;
 		});
 		this.scope.register([], " ", () => {
-			void this.renderer?.next();
+			this.nextPage();
 			return false;
 		});
 		this.scope.register(["Shift"], " ", () => {
-			void this.renderer?.prev();
+			this.prevPage();
 			return false;
 		});
 		this.scope.register([], "Escape", () => {
 			this.pendingSelection = null;
 			// Don't consume the event — let Obsidian handle Escape too
 			return true;
+		});
+
+		// Alt+Left arrow to go back after clicking a link
+		this.scope.register(["Alt"], "ArrowLeft", () => {
+			this.goBack();
+			return false;
+		});
+
+		// Page Up / Page Down
+		this.scope.register([], "PageDown", () => {
+			this.nextPage();
+			return false;
+		});
+		this.scope.register([], "PageUp", () => {
+			this.prevPage();
+			return false;
+		});
+
+		// Home / End — go to beginning / end of book
+		this.scope.register([], "Home", () => {
+			void this.renderer?.display();
+			return false;
+		});
+		this.scope.register([], "End", () => {
+			const href = this.renderer?.getRendition()?.getSpineEndHref();
+			if (href) void this.renderer?.display(href);
+			return false;
 		});
 
 		// Number keys 1-9 for quick color selection
@@ -88,8 +122,8 @@ export class EpubView extends FileView {
 				this.createHighlightAnnotation(
 					this.pendingSelection.cfiRange,
 					color,
-					this.pendingSelection.contents,
 				);
+				this.pendingSelection.selection.clearSelection();
 				void this.copyWithColor(
 					this.pendingSelection.cfiRange,
 					this.pendingSelection.text,
@@ -157,15 +191,18 @@ export class EpubView extends FileView {
 			this.renditionEl!,
 			this.plugin.settings,
 			{
-				onRelocated: (location: Location) =>
+				onRelocated: (location: ReaderLocation) =>
 					this.handleRelocated(location),
-				onSelected: (cfiRange: string, contents: Contents) =>
-					this.handleSelected(cfiRange, contents),
+				onSelected: (cfiRange: string, selection: SelectionInfo) =>
+					this.handleSelected(cfiRange, selection),
 				onRendered: () => this.handleRendered(),
 				onFocused: () => {
 					this.app.workspace.setActiveLeaf(this.leaf, {
 						focus: false,
 					});
+				},
+				onBeforeResizeNav: () => {
+					this.suppressHistoryPush = true;
 				},
 			},
 		);
@@ -173,7 +210,7 @@ export class EpubView extends FileView {
 		await this.renderer.open(data);
 
 		// TOC panel — some EPUBs have missing/broken TOC files
-		let toc: import("epubjs").NavItem[] = [];
+		let toc: TocItem[] = [];
 		try {
 			toc = await this.renderer.getTocAsync();
 		} catch {
@@ -182,7 +219,10 @@ export class EpubView extends FileView {
 		this.tocPanel = new TocPanel(
 			this.containerEl_!.querySelector(".epub-plus-toc-panel")!,
 			toc,
-			(href) => void this.renderer?.display(href),
+			(href) => {
+				this.suppressHistoryPush = true;
+				void this.renderer?.display(href);
+			},
 		);
 		if (this.plugin.settings.showTocOnOpen) {
 			this.tocPanel.show();
@@ -192,16 +232,18 @@ export class EpubView extends FileView {
 		this.toolbar = new ReaderToolbar(
 			this.containerEl_!.querySelector(".epub-plus-toolbar")!,
 			{
-				onPrev: () => void this.renderer?.prev(),
-				onNext: () => void this.renderer?.next(),
+				onPrev: () => this.prevPage(),
+				onNext: () => this.nextPage(),
 				onTocToggle: () => this.tocPanel?.toggle(),
 				onBacklinksToggle: () => this.backlinkPanel?.toggle(),
 				onFontSizeChange: (delta) => this.changeFontSize(delta),
+				onGoBack: () => this.goBack(),
+				onLinkNote: () => this.linkCompanionNote(),
 			},
 		);
 
 		// Display at saved position or pending CFI
-		const startCfi = this.pendingCfi ?? this.getSavedCfi(file);
+		const startCfi = this.pendingCfi ?? await this.getSavedCfi(file);
 		this.pendingCfi = null;
 
 		try {
@@ -225,7 +267,10 @@ export class EpubView extends FileView {
 
 		// Vim keybindings
 		if (this.plugin.settings.enableVimBindings && this.renderer) {
-			this.vimBindings = new VimBindings(this.scope!, this.renderer);
+			this.vimBindings = new VimBindings(this.scope!, this.renderer, {
+				onNext: () => this.nextPage(),
+				onPrev: () => this.prevPage(),
+			});
 		}
 
 		// Phase 2: Backlink highlighting
@@ -242,7 +287,8 @@ export class EpubView extends FileView {
 		this.tocPanel = null;
 		this.toolbar = null;
 		this.progressFillEl = null;
-		this.pageInfoEl = null;
+		this.chapterPageEl = null;
+		this.bookPercentEl = null;
 		if (this.loadingEl) {
 			this.loadingEl.remove();
 			this.loadingEl = null;
@@ -298,9 +344,24 @@ export class EpubView extends FileView {
 		this.renditionEl = readerArea.createDiv({
 			cls: "epub-plus-rendition",
 		});
+
+		// Click-to-turn zones on left/right margins
+		const prevZone = this.renditionEl.createDiv({ cls: "epub-plus-page-zone epub-plus-page-zone-prev" });
+		prevZone.addEventListener("click", () => this.prevPage());
+		const nextZone = this.renditionEl.createDiv({ cls: "epub-plus-page-zone epub-plus-page-zone-next" });
+		nextZone.addEventListener("click", () => this.nextPage());
+
 		const bottomBar = readerArea.createDiv({ cls: "epub-plus-bottom-bar" });
 		this.progressFillEl = bottomBar.createDiv({ cls: "epub-plus-progress-fill" });
-		this.pageInfoEl = bottomBar.createDiv({ cls: "epub-plus-page-info" });
+		this.chapterPageEl = bottomBar.createDiv({ cls: "epub-plus-bottom-chapter" });
+		this.bookPercentEl = bottomBar.createDiv({ cls: "epub-plus-bottom-percent" });
+
+		// Click on progress bar to jump to position
+		bottomBar.addEventListener("click", (e) => {
+			const rect = bottomBar.getBoundingClientRect();
+			const pct = (e.clientX - rect.left) / rect.width;
+			this.jumpToPercentage(pct);
+		});
 
 		this.containerEl_.createDiv({ cls: "epub-plus-backlink-panel" });
 
@@ -358,14 +419,18 @@ export class EpubView extends FileView {
 			".epub-plus-backlink-panel",
 		) as HTMLElement | null;
 		if (panelEl) {
-			this.backlinkPanel = new BacklinkPanel(this.app, panelEl, {
-				onEntryHover: (bl) =>
-					this.hoverSync?.onPanelEntryHover(bl),
-				onEntryClick: (bl) => {
-					// Navigate EPUB to the highlight position
-					void this.renderer?.display(bl.cfiStart);
+			this.backlinkPanel = new BacklinkPanel(
+				this.app,
+				panelEl,
+				{
+					onEntryHover: (bl) =>
+						this.hoverSync?.onPanelEntryHover(bl),
+					onEntryClick: (bl) => {
+						void this.renderer?.display(bl.cfiStart);
+					},
 				},
-			});
+				settings.colorPalette,
+			);
 			if (settings.showBacklinkPanel) {
 				this.backlinkPanel.show();
 			}
@@ -378,7 +443,6 @@ export class EpubView extends FileView {
 		this.hoverSync = new HoverSyncBridge(
 			this.highlightManager,
 			this.backlinkPanel,
-			this.renderer,
 			settings.hoverSyncMode,
 		);
 
@@ -438,48 +502,73 @@ export class EpubView extends FileView {
 	// ── Event Handlers ──
 
 	private handleRendered(): void {
-		// EPUB.js annotations API auto-injects highlights on page turns.
-		// No manual re-attach needed — kept as a hook for future use.
+		// EPUB.js rendered hook — reserved for future use
 	}
 
-	private handleRelocated(location: Location): void {
+	private handleRelocated(location: ReaderLocation): void {
 		const locationsReady =
 			this.renderer?.areLocationsReady() ?? false;
 		const bookPercent = locationsReady
 			? this.renderer!.getPercentage()
 			: 0;
 
+		// Track navigation history for back navigation.
+		// Only push to history when an in-book link is clicked (not page
+		// turns, not back navigation, not TOC clicks handled by us).
+		// Sequential page turns (next/prev) and back navigation set
+		// suppressHistoryPush=true before navigating.
+		const currentCfi = location.cfi;
+		if (this.suppressHistoryPush) {
+			this.suppressHistoryPush = false;
+		} else if (this.lastCfi && currentCfi !== this.lastCfi) {
+			const currentHref = location.href;
+			const prevHref = this.renderer?.getLastHref() ?? "";
+			// Different file = a link was clicked inside the book
+			if (prevHref && prevHref !== currentHref) {
+				this.navHistory.push(this.lastCfi);
+				if (this.navHistory.length > 50) {
+					this.navHistory.shift();
+				}
+				this.toolbar?.showBackButton(true);
+			}
+		}
+		this.lastCfi = currentCfi;
+		this.renderer?.setLastHref(location.href);
+
 		const chapterName = this.renderer?.getCurrentChapterTitle() ?? "";
 
-		if (this.toolbar) {
-			this.toolbar.updateProgress(bookPercent);
-			this.toolbar.updateChapter(chapterName);
-		}
+		const displayed = location.displayed;
+		this.toolbar?.updateChapter(chapterName);
 
-		// Update progress bar (book-level)
+		// Update bottom progress bar
 		if (this.progressFillEl) {
 			this.progressFillEl.setCssProps({
 				"--progress": `${String(bookPercent)}%`,
 			});
 		}
-
-		// Update page counter (chapter-level pages)
-		if (this.pageInfoEl) {
-			const displayed = location.start.displayed;
-			if (displayed) {
-				this.pageInfoEl.textContent =
-					`${String(displayed.page)}/${String(displayed.total)}`;
+		if (this.chapterPageEl && displayed) {
+			this.chapterPageEl.textContent =
+				`${String(displayed.page)} of ${String(displayed.total)}`;
+		}
+		if (this.bookPercentEl) {
+			if (bookPercent > 0) {
+				const display = bookPercent % 1 === 0
+					? String(bookPercent)
+					: bookPercent.toFixed(1);
+				this.bookPercentEl.textContent = `${display}%`;
+			} else {
+				this.bookPercentEl.textContent = "";
 			}
 		}
 
 		if (this.tocPanel) {
 			const contentDoc = this.getContentDocument();
-			this.tocPanel.setActiveHref(location.start.href, contentDoc);
+			this.tocPanel.setActiveHref(location.href, contentDoc);
 		}
 
 		// Update backlink panel chapter filter
 		this.backlinkPanel?.setCurrentChapter(
-			location.start.href,
+			location.href,
 			chapterName,
 		);
 
@@ -490,10 +579,10 @@ export class EpubView extends FileView {
 			this.file &&
 			autoSave &&
 			locationsReady &&
-			location.start.cfi
+			location.cfi
 		) {
 			this.plugin.progressStore.set(this.file.path, {
-				cfi: location.start.cfi,
+				cfi: location.cfi,
 				percent: bookPercent,
 				updated: new Date().toISOString(),
 			});
@@ -507,83 +596,65 @@ export class EpubView extends FileView {
 				console.debug(
 					"[EPUB++] Syncing progress to disk:",
 					bookPercent + "%",
-					location.start.cfi,
+					location.cfi,
 				);
 				this.plugin.progressStore.scheduleSave();
 			}
 		}
 	}
 
-	private handleSelected(cfiRange: string, contents: Contents): void {
-		const selection = contents.window.getSelection();
-		const text = selection?.toString() ?? "";
+	private handleSelected(cfiRange: string, selInfo: SelectionInfo): void {
+		const text = selInfo.text;
 		if (!text || !this.file) return;
 
-		// Store for keyboard shortcut (1-7 keys)
-		this.pendingSelection = { cfiRange, text, contents };
-
-		this.showSelectionPopup(contents, cfiRange, text);
+		this.pendingSelection = { cfiRange, text, selection: selInfo };
+		this.showSelectionPopup(selInfo, cfiRange, text);
 	}
 
 	private showSelectionPopup(
-		contents: Contents,
+		selInfo: SelectionInfo,
 		cfiRange: string,
 		text: string,
 	): void {
-		const doc = contents.document;
-		const selection = contents.window.getSelection();
-		if (!selection || selection.rangeCount === 0) return;
+		const doc = selInfo.document;
+		const winSel = selInfo.window.getSelection();
+		if (!winSel || winSel.rangeCount === 0) return;
 
-		const range = selection.getRangeAt(0);
+		const range = winSel.getRangeAt(0);
 		const rect = range.getBoundingClientRect();
 		const palette = this.plugin.settings.colorPalette;
 
 		showColorPalettePopup(doc, rect, palette, {
 			onColorSelect: (color: PaletteColor) => {
-				this.createHighlightAnnotation(cfiRange, color, contents);
+				this.createHighlightAnnotation(cfiRange, color);
+				selInfo.clearSelection();
 				void this.copyWithColor(cfiRange, text, color.name);
 			},
 			onAddToNote: (color: PaletteColor) => {
-				this.createHighlightAnnotation(cfiRange, color, contents);
+				this.createHighlightAnnotation(cfiRange, color);
+				selInfo.clearSelection();
 				void this.addToActiveNote(cfiRange, text, color.name);
 			},
 		});
 	}
 
-	/**
-	 * Create a persistent highlight annotation in the EPUB viewer
-	 * and clear the text selection (following the epub.js reference pattern).
-	 */
 	private createHighlightAnnotation(
 		cfiRange: string,
 		color: PaletteColor,
-		contents: Contents,
 	): void {
 		const rendition = this.renderer?.getRendition();
 		if (!rendition) return;
 
 		try {
-			rendition.annotations.highlight(
+			rendition.addHighlight(
 				cfiRange,
 				{},
-				() => {
-					// highlight clicked
-				},
-				"epubjs-hl",
-				{
-					fill: color.hex,
-					"fill-opacity": String(
-						this.plugin.settings.highlightOpacity,
-					),
-					"mix-blend-mode": "multiply",
-				},
+				color.hex,
+				this.plugin.settings.highlightOpacity,
 			);
 		} catch {
 			// ignore CFI resolution errors
 		}
-
-		// Clear the text selection
-		contents.window.getSelection()?.removeAllRanges();
 	}
 
 	private async copyWithColor(
@@ -632,6 +703,35 @@ export class EpubView extends FileView {
 		};
 	}
 
+	private nextPage(): void {
+		this.suppressHistoryPush = true;
+		void this.renderer?.next();
+	}
+
+	private prevPage(): void {
+		this.suppressHistoryPush = true;
+		void this.renderer?.prev();
+	}
+
+	private goBack(): void {
+		const cfi = this.navHistory.pop();
+		if (!cfi) return;
+		this.suppressHistoryPush = true;
+		void this.renderer?.display(cfi);
+		if (this.navHistory.length === 0) {
+			this.toolbar?.showBackButton(false);
+		}
+	}
+
+	private jumpToPercentage(pct: number): void {
+		if (!this.renderer?.areLocationsReady()) return;
+		const cfi = this.renderer.cfiFromPercentage(Math.max(0, Math.min(1, pct)));
+		if (cfi) {
+			this.suppressHistoryPush = true;
+			void this.renderer.display(cfi);
+		}
+	}
+
 	private changeFontSize(delta: number): void {
 		const current = this.plugin.settings.fontSize ?? 18;
 		this.plugin.settings.fontSize = Math.max(
@@ -647,18 +747,110 @@ export class EpubView extends FileView {
 	 */
 	private getContentDocument(): Document | undefined {
 		try {
-			const contents = this.renderer?.getRendition()?.getContents();
-			const list = Array.isArray(contents) ? contents : [contents];
-			const first = list[0] as { document?: Document } | undefined;
-			return first?.document;
+			const contents = this.renderer?.getRendition()?.getContents() ?? [];
+			return contents[0]?.document;
 		} catch {
 			return undefined;
 		}
 	}
 
-	private getSavedCfi(file: TFile): string | null {
-		const progress = this.plugin.progressStore.get(file.path);
+	private linkCompanionNote(): void {
+		if (!this.file) return;
+		const modal = new LinkNoteModal(this.app, this.file.path, (notePath) => {
+			if (!this.file) return;
+			// Tell the frontmatter store to use this note
+			this.plugin.progressStore.setCompanionNote(this.file.path, notePath);
+			// Save current progress to the new companion note
+			const current = this.plugin.progressStore.get(this.file.path);
+			if (current) {
+				this.plugin.progressStore.set(this.file.path, current);
+			}
+			new Notice(`Linked to ${notePath}.md`);
+		});
+		modal.open();
+	}
+
+	private async getSavedCfi(file: TFile): Promise<string | null> {
+		const progress = await this.plugin.progressStore.getAsync(file.path);
 		console.debug("[EPUB++] getSavedCfi:", file.path, "→", progress?.cfi ?? "none", progress?.percent ?? 0, "%");
 		return progress?.cfi ?? null;
 	}
 }
+
+class LinkNoteModal extends Modal {
+	private result = "";
+
+	constructor(
+		app: import("obsidian").App,
+		private epubPath: string,
+		private onSubmit: (notePath: string) => void,
+	) {
+		super(app);
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: "Link companion note" });
+		contentEl.createEl("p", {
+			text: "Paste an Obsidian URL or enter the note path. Reading progress will be stored in this note's frontmatter.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(contentEl)
+			.setName("Note path or URL")
+			.addText((text) => {
+				text.setPlaceholder(
+					this.epubPath.replace(/\.epub$/i, ""),
+				);
+				text.inputEl.addClass("epub-plus-modal-input");
+				text.onChange((value) => {
+					this.result = value;
+				});
+			});
+
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Link")
+					.setCta()
+					.onClick(() => {
+						const notePath = this.resolveNotePath(this.result);
+						if (notePath) {
+							this.onSubmit(notePath);
+							this.close();
+						} else {
+							new Notice("Invalid note path or URL");
+						}
+					}),
+			);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+
+	private resolveNotePath(input: string): string | null {
+		if (!input.trim()) {
+			// Default: companion note with same name
+			return this.epubPath.replace(/\.epub$/i, "");
+		}
+
+		// Handle obsidian:// URLs
+		if (input.startsWith("obsidian://")) {
+			try {
+				const url = new URL(input);
+				const filePath = url.searchParams.get("file");
+				if (filePath) {
+					return decodeURIComponent(filePath);
+				}
+			} catch {
+				// Not a valid URL
+			}
+		}
+
+		// Strip .md extension if provided (we'll add it)
+		const clean = input.replace(/\.md$/, "");
+		return clean;
+	}
+}
+

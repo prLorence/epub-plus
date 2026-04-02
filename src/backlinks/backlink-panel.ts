@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import type { EpubBacklink } from "../types";
+import type { EpubBacklink, PaletteColor } from "../types";
 
 export interface BacklinkPanelCallbacks {
 	onEntryHover: (backlink: EpubBacklink | null) => void;
@@ -18,11 +18,15 @@ export class BacklinkPanel {
 	private emptyEl: HTMLElement | null = null;
 	private filterBtn: HTMLElement | null = null;
 
+	private colorPalette: PaletteColor[];
+
 	constructor(
 		private app: App,
 		private containerEl: HTMLElement,
 		private callbacks: BacklinkPanelCallbacks,
+		colorPalette: PaletteColor[] = [],
 	) {
+		this.colorPalette = colorPalette;
 		this.renderStructure();
 	}
 
@@ -172,7 +176,7 @@ export class BacklinkPanel {
 		);
 
 		for (const [key, el] of this.entryMap) {
-			el.style.display = visibleKeys.has(key) ? "" : "none";
+			el.toggleClass("epub-plus-hidden", !visibleKeys.has(key));
 		}
 
 		// Update count
@@ -182,12 +186,8 @@ export class BacklinkPanel {
 
 		// Show/hide empty message and list
 		const hasVisible = filtered.length > 0;
-		if (this.emptyEl) {
-			this.emptyEl.style.display = hasVisible ? "none" : "";
-		}
-		if (this.listEl) {
-			this.listEl.style.display = hasVisible ? "" : "none";
-		}
+		this.emptyEl?.toggleClass("epub-plus-hidden", hasVisible);
+		this.listEl?.toggleClass("epub-plus-hidden", !hasVisible);
 
 		// Also hide chapter headers if all their entries are hidden
 		if (this.listEl) {
@@ -195,7 +195,7 @@ export class BacklinkPanel {
 				".epub-plus-bl-chapter-header",
 			);
 			for (let i = 0; i < headers.length; i++) {
-				const header = headers[i]!;
+				const header = headers[i] as HTMLElement;
 				let next = header.nextElementSibling;
 				let anyVisible = false;
 				while (
@@ -204,17 +204,13 @@ export class BacklinkPanel {
 						"epub-plus-bl-chapter-header",
 					)
 				) {
-					if (
-						(next as HTMLElement).style.display !== "none"
-					) {
+					if (!next.classList.contains("epub-plus-hidden")) {
 						anyVisible = true;
 						break;
 					}
 					next = next.nextElementSibling;
 				}
-				(header as HTMLElement).style.display = anyVisible
-					? ""
-					: "none";
+				header.toggleClass("epub-plus-hidden", !anyVisible);
 			}
 		}
 	}
@@ -288,15 +284,7 @@ export class BacklinkPanel {
 	}
 
 	private colorNameToHex(name: string): string {
-		const colors: Record<string, string> = {
-			yellow: "#ffd400",
-			red: "#ff6b6b",
-			green: "#51cf66",
-			blue: "#4dabf7",
-			purple: "#cc5de8",
-			pink: "#f06595",
-			orange: "#ff922b",
-		};
-		return colors[name] ?? "#ffd400";
+		const found = this.colorPalette.find((c) => c.name === name);
+		return found?.hex ?? "#ffd400";
 	}
 }

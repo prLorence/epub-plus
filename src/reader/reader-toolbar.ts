@@ -4,11 +4,13 @@ export interface ToolbarCallbacks {
 	onTocToggle: () => void;
 	onBacklinksToggle?: () => void;
 	onFontSizeChange: (delta: number) => void;
+	onGoBack?: () => void;
+	onLinkNote?: () => void;
 }
 
 export class ReaderToolbar {
-	private progressEl: HTMLElement | null = null;
 	private chapterEl: HTMLElement | null = null;
+	private backBtn: HTMLElement | null = null;
 
 	constructor(
 		private containerEl: HTMLElement,
@@ -17,23 +19,15 @@ export class ReaderToolbar {
 		this.render();
 	}
 
-	updateProgress(percent: number): void {
-		if (this.progressEl) {
-			if (percent <= 0) {
-				this.progressEl.textContent = "";
-			} else {
-				// Show integer if whole number, one decimal otherwise
-				const display = percent % 1 === 0
-					? String(percent)
-					: percent.toFixed(1);
-				this.progressEl.textContent = `${display}%`;
-			}
-		}
-	}
-
 	updateChapter(title: string): void {
 		if (this.chapterEl) {
 			this.chapterEl.textContent = title;
+		}
+	}
+
+	showBackButton(visible: boolean): void {
+		if (this.backBtn) {
+			this.backBtn.toggleClass("epub-plus-hidden", !visible);
 		}
 	}
 
@@ -55,17 +49,25 @@ export class ReaderToolbar {
 			this.callbacks.onTocToggle(),
 		);
 
+		// Left: Back button (hidden until a link is followed)
+		if (this.callbacks.onGoBack) {
+			this.backBtn = this.createButton(
+				left,
+				"\u21A9",
+				"Go back (Alt+\u2190)",
+				() => this.callbacks.onGoBack!(),
+			);
+			this.backBtn.addClass("epub-plus-hidden");
+		}
+
 		// Left: Previous page
 		this.createButton(left, "\u2190", "Previous page", () =>
 			this.callbacks.onPrev(),
 		);
 
-		// Center: chapter name + progress
+		// Center: chapter name only
 		this.chapterEl = center.createEl("span", {
 			cls: "epub-plus-toolbar-chapter",
-		});
-		this.progressEl = center.createEl("span", {
-			cls: "epub-plus-toolbar-progress",
 		});
 
 		// Right: font controls, backlinks toggle, next
@@ -82,6 +84,15 @@ export class ReaderToolbar {
 				"\u{1F517}",
 				"Toggle backlinks panel",
 				() => this.callbacks.onBacklinksToggle!(),
+			);
+		}
+
+		if (this.callbacks.onLinkNote) {
+			this.createButton(
+				right,
+				"\u{1F4CE}",
+				"Link companion note",
+				() => this.callbacks.onLinkNote!(),
 			);
 		}
 
