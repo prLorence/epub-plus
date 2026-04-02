@@ -1,7 +1,6 @@
 import type { EpubBacklink } from "../types";
 import type { HighlightManager } from "./highlight-manager";
 import type { BacklinkPanel } from "./backlink-panel";
-import type { EpubRenderer } from "../reader/epub-renderer";
 
 export type HoverSyncMode =
 	| "both"
@@ -16,7 +15,6 @@ export class HoverSyncBridge {
 	constructor(
 		private highlightManager: HighlightManager,
 		private backlinkPanel: BacklinkPanel | null,
-		private renderer: EpubRenderer,
 		private mode: HoverSyncMode,
 	) {}
 

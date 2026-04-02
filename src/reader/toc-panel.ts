@@ -1,4 +1,4 @@
-import type { NavItem } from "epubjs";
+import type { TocItem } from "../engine/types";
 
 export class TocPanel {
 	private visible = false;
@@ -15,7 +15,7 @@ export class TocPanel {
 
 	constructor(
 		private containerEl: HTMLElement,
-		private toc: NavItem[],
+		private toc: TocItem[],
 		private onNavigate: (href: string) => void,
 	) {
 		this.render();
@@ -80,7 +80,7 @@ export class TocPanel {
 
 	private renderItems(
 		parent: HTMLElement,
-		items: NavItem[],
+		items: TocItem[],
 		depth: number,
 	): void {
 		for (const item of items) {
@@ -112,8 +112,8 @@ export class TocPanel {
 				}
 			}
 
-			if (item.subitems && item.subitems.length > 0) {
-				this.renderItems(parent, item.subitems, depth + 1);
+			if (item.children && item.children.length > 0) {
+				this.renderItems(parent, item.children, depth + 1);
 			}
 		}
 	}

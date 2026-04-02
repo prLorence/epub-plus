@@ -1,4 +1,6 @@
-import type { Rendition } from "epubjs";
+import { Platform } from "obsidian";
+import type { IRendition } from "../engine/types";
+import { addLongPress } from "../reader/touch-utils";
 import type { EpubBacklink, PaletteColor } from "../types";
 
 export interface HighlightCallbacks {
@@ -7,6 +9,7 @@ export interface HighlightCallbacks {
 		backlinks: EpubBacklink[] | null,
 		event: MouseEvent,
 	) => void;
+	onHighlightContextMenu?: (backlinks: EpubBacklink[], event: MouseEvent) => void;
 }
 
 /**
@@ -24,7 +27,7 @@ export class HighlightManager {
 	private stylesApplied = false;
 
 	constructor(
-		private getRendition: () => Rendition | null,
+		private getRendition: () => IRendition | null,
 		private palette: PaletteColor[],
 		private opacity: number,
 		private callbacks: HighlightCallbacks,
@@ -34,28 +37,9 @@ export class HighlightManager {
 	 * Apply highlight styles via rendition.themes.default().
 	 * Must be called after the rendition is created and before highlights are applied.
 	 */
-	applyHighlightStyles(): void {
-		const rendition = this.getRendition();
-		if (!rendition || this.stylesApplied) return;
-
-		rendition.themes.default({
-			".epubjs-hl": {
-				fill: "yellow",
-				"fill-opacity": String(this.opacity),
-				"mix-blend-mode": "multiply",
-			},
-			"::selection": {
-				background: "rgba(255,255,0, 0.3)",
-			},
-		});
-		this.stylesApplied = true;
-	}
-
 	applyBacklinks(backlinks: EpubBacklink[]): void {
 		const rendition = this.getRendition();
 		if (!rendition) return;
-
-		this.applyHighlightStyles();
 
 		// Group by CFI range
 		const grouped = new Map<string, EpubBacklink[]>();
@@ -71,11 +55,7 @@ export class HighlightManager {
 		// Remove stale highlights
 		for (const cfi of this.appliedCfis) {
 			if (!grouped.has(cfi)) {
-				try {
-					rendition.annotations.remove(cfi, "highlight");
-				} catch {
-					// ignore
-				}
+				rendition.removeHighlight(cfi);
 				this.appliedCfis.delete(cfi);
 			}
 		}
@@ -87,17 +67,13 @@ export class HighlightManager {
 					const color = bls[0]!.color;
 					const hex = this.colorNameToHex(color);
 
-					rendition.annotations.highlight(
+					rendition.addHighlight(
 						cfi,
 						{ backlinks: bls },
+						hex,
+						this.opacity,
 						(e: MouseEvent) => {
 							this.callbacks.onHighlightClick(bls, e);
-						},
-						"epubjs-hl",
-						{
-							fill: hex,
-							"fill-opacity": String(this.opacity),
-							"mix-blend-mode": "multiply",
 						},
 					);
 					this.appliedCfis.add(cfi);
@@ -108,6 +84,52 @@ export class HighlightManager {
 		}
 
 		this.backlinkMap = grouped;
+
+		// Attach contextmenu listeners for right-click color change
+		if (this.callbacks.onHighlightContextMenu) {
+			this.attachContextMenuListeners();
+		}
+	}
+
+	/**
+	 * Attach right-click listeners to highlight elements in the content.
+	 * Must be called after highlights are applied.
+	 */
+	private attachContextMenuListeners(): void {
+		const rendition = this.getRendition();
+		if (!rendition) return;
+
+		for (const content of rendition.getContents()) {
+			const hlElements = content.document.querySelectorAll(".epubjs-hl");
+			for (let i = 0; i < hlElements.length; i++) {
+				const el = hlElements[i] as HTMLElement;
+				// Avoid double-binding
+				if (el.dataset["ctxBound"]) continue;
+				el.dataset["ctxBound"] = "1";
+
+				el.addEventListener("contextmenu", (e: MouseEvent) => {
+					e.preventDefault();
+					e.stopPropagation();
+					const cfi = el.getAttribute("data-epubcfi") ?? "";
+					const bls = this.backlinkMap.get(cfi);
+					if (bls && this.callbacks.onHighlightContextMenu) {
+						this.callbacks.onHighlightContextMenu(bls, e);
+					}
+				});
+				if (Platform.isMobile) {
+					addLongPress(el, (touch) => {
+						const cfi = el.getAttribute("data-epubcfi") ?? "";
+						const bls = this.backlinkMap.get(cfi);
+						if (bls && this.callbacks.onHighlightContextMenu) {
+							this.callbacks.onHighlightContextMenu(bls, new MouseEvent("contextmenu", {
+								clientX: touch.clientX,
+								clientY: touch.clientY,
+							}));
+						}
+					});
+				}
+			}
+		}
 	}
 
 	clearAll(): void {
@@ -115,11 +137,7 @@ export class HighlightManager {
 		if (!rendition) return;
 
 		for (const cfi of this.appliedCfis) {
-			try {
-				rendition.annotations.remove(cfi, "highlight");
-			} catch {
-				// ignore
-			}
+			rendition.removeHighlight(cfi);
 		}
 		this.appliedCfis.clear();
 		this.backlinkMap.clear();
@@ -152,49 +170,20 @@ export class HighlightManager {
 		return this.backlinkMap.get(cfiRange) ?? [];
 	}
 
-	/**
-	 * Toggle hover class on a specific highlight element by looking up
-	 * the annotation's mark element directly via epub.js internals,
-	 * avoiding a full querySelectorAll scan.
-	 */
 	private toggleHoverClass(cfi: string, active: boolean): void {
 		const rendition = this.getRendition();
 		if (!rendition) return;
 
-		// Access epub.js annotation internals to find the element
-		const annotations = rendition.annotations as unknown as {
-			_annotations: Record<
-				string,
-				{ mark?: { element?: Element } }
-			>;
-		};
-		const hash = encodeURI(cfi + "highlight");
-		const annotation = annotations._annotations[hash];
-		const el = annotation?.mark?.element;
-		if (el) {
-			el.classList.toggle("epubjs-hl-hover", active);
-			return;
-		}
-
-		// Fallback: search iframe views for highlights matching this CFI
-		// epub.js stores highlights per-view keyed by cfiRange
+		// Search content documents for highlight elements matching this CFI
 		try {
-			const views = rendition.views();
-			const viewList = (
-				views as unknown as {
-					_views: { highlights?: Record<string, { element?: Element }> }[];
-				}
-			)._views;
-			if (viewList) {
-				for (const view of viewList) {
-					const hlEntry = view.highlights?.[cfi];
-					if (hlEntry?.element) {
-						hlEntry.element.classList.toggle(
-							"epubjs-hl-hover",
-							active,
-						);
-						return;
-					}
+			for (const content of rendition.getContents()) {
+				const encodedCfi = encodeURI(cfi);
+				const el: HTMLElement | null = content.document.querySelector(
+					`[data-epubcfi="${encodedCfi}"]`,
+				);
+				if (el) {
+					el.classList.toggle("epubjs-hl-hover", active);
+					return;
 				}
 			}
 		} catch {

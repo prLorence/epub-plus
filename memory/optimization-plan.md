@@ -145,3 +145,17 @@ Last audited: 2026-03-29
 **What was done:**
 - Cached `progressFillEl` and `pageInfoEl` during `buildDom()` instead of `querySelector` on every page turn
 - Deduplicated `getCurrentChapterTitle()` — was called twice per relocate (toolbar + backlink panel), now called once and result shared
+
+### 20. Vim Bindings — History Suppression ✅
+**File:** `src/reader/vim-bindings.ts`
+**What was done:**
+- Vim j/k/h/l page turns now go through the view's `nextPage()`/`prevPage()` callbacks instead of calling `renderer.next()`/`prev()` directly
+- Ensures vim page turns suppress history push (same as arrow keys and toolbar buttons)
+- Prevents false back-button appearances when crossing chapters with vim keys
+
+### 21. Backlink Panel — Palette & Visibility ✅
+**File:** `src/backlinks/backlink-panel.ts`
+**What was done:**
+- Replaced hardcoded color map with palette passed from plugin settings via constructor
+- Replaced all `style.display` assignments with `toggleClass("epub-plus-hidden")` — satisfies obsidianmd/no-static-styles-assignment lint rule and uses CSS classes for better theming
+- Chapter header visibility check now uses `classList.contains` instead of `style.display` comparison

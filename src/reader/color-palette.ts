@@ -1,8 +1,8 @@
 import type { PaletteColor } from "../types";
 
 export interface PaletteCallbacks {
-	onColorSelect: (color: PaletteColor) => void;
-	onAddToNote: (color: PaletteColor) => void;
+	onColorSelect: (color: PaletteColor, style?: "highlight" | "underline") => void;
+	onAddToNote: (color: PaletteColor, style?: "highlight" | "underline") => void;
 }
 
 /**
@@ -36,6 +36,8 @@ export function showColorPalettePopup(
 	s.boxShadow = "0 2px 12px rgba(0,0,0,0.4)";
 	s.whiteSpace = "nowrap";
 
+	let annotationStyle: "highlight" | "underline" = "highlight";
+
 	// Color swatches
 	for (const color of palette) {
 		const swatch = doc.createElement("button");
@@ -61,11 +63,38 @@ export function showColorPalettePopup(
 		});
 		swatch.addEventListener("click", (e) => {
 			e.stopPropagation();
-			callbacks.onColorSelect(color);
+			callbacks.onColorSelect(color, annotationStyle);
 			cleanup();
 		});
 		popup.appendChild(swatch);
 	}
+
+	// Underline toggle
+	const ulBtn = doc.createElement("button");
+	ulBtn.className = "epub-plus-popup-swatch";
+	ulBtn.title = "Toggle underline";
+	const ubs = ulBtn.style;
+	ubs.width = "22px";
+	ubs.height = "22px";
+	ubs.borderRadius = "50%";
+	ubs.border = "2px solid transparent";
+	ubs.background = "transparent";
+	ubs.cursor = "pointer";
+	ubs.padding = "0";
+	ubs.margin = "0";
+	ubs.fontSize = "14px";
+	ubs.lineHeight = "22px";
+	ubs.textAlign = "center";
+	ubs.color = "#ccc";
+	ubs.textDecoration = "underline";
+	ulBtn.textContent = "U";
+	ulBtn.addEventListener("click", (e) => {
+		e.stopPropagation();
+		annotationStyle = annotationStyle === "highlight" ? "underline" : "highlight";
+		ubs.color = annotationStyle === "underline" ? "#fff" : "#ccc";
+		ubs.background = annotationStyle === "underline" ? "#555" : "transparent";
+	});
+	popup.appendChild(ulBtn);
 
 	// Separator
 	const sep = doc.createElement("span");

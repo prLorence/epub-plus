@@ -1,8 +1,13 @@
 # Renderer Abstraction Plan (Strategy Pattern)
 
+Updated: 2026-04-02 — Incorporating Zotero reader research
+
 ## Goal
 
-Abstract all EPUB.js dependencies behind interfaces so the rendering engine can be swapped between epub.js and Readium (or any future engine) via a settings toggle.
+Abstract all EPUB.js dependencies behind interfaces so the rendering engine can be swapped. Two engines planned:
+
+1. **`epubjs`** (current) — uses EPUB.js's full rendering pipeline. Simple, working, but has quirks (resize page jumps, JS-based pagination, iframe-per-section).
+2. **`native`** (new, Zotero-inspired) — uses EPUB.js only for parsing/unpacking, renders sections as direct DOM nodes in a single iframe with CSS multi-column pagination. Preserves book CSS with scoped selectors, uses `rem`-based font scaling.
 
 ## Architecture
 
@@ -10,12 +15,12 @@ Abstract all EPUB.js dependencies behind interfaces so the rendering engine can 
 src/
   engine/
     types.ts              # Shared interfaces (IBookEngine, IRendition, etc.)
-    epubjs-engine.ts      # epub.js implementation
-    readium-engine.ts     # Readium implementation (future)
+    epubjs-engine.ts      # epub.js full-pipeline implementation (current behavior)
+    native-engine.ts      # Custom renderer: epub.js parse + direct DOM + CSS columns
     engine-factory.ts     # Factory: settings → engine instance
 ```
 
-All consumer code (`epub-view.ts`, `highlight-manager.ts`, `vim-bindings.ts`, etc.) uses only the interfaces from `engine/types.ts`, never importing from `epubjs` or `@readium/*` directly.
+All consumer code (`epub-view.ts`, `highlight-manager.ts`, `vim-bindings.ts`, etc.) uses only the interfaces from `engine/types.ts`, never importing from `epubjs` directly.
 
 ## Interfaces
 
@@ -23,32 +28,32 @@ All consumer code (`epub-view.ts`, `highlight-manager.ts`, `vim-bindings.ts`, et
 
 ```ts
 interface IBookEngine {
-	open(data: ArrayBuffer): Promise<void>;
-	renderTo(el: HTMLElement, options: RenderOptions): IRendition;
-	getToc(): Promise<TocItem[]>;
-	getMetadata(): Promise<BookMetadata>;
-	getRange(cfiRange: string): Promise<Range | null>;
-	destroy(): void;
+  open(data: ArrayBuffer): Promise<void>;
+  renderTo(el: HTMLElement, options: RenderOptions): IRendition;
+  getToc(): Promise<TocItem[]>;
+  getMetadata(): Promise<BookMetadata>;
+  getRange(cfiRange: string): Promise<Range | null>;
+  destroy(): void;
 }
 
 interface RenderOptions {
-	width: number;
-	height: number;
-	spread: "none" | "auto";
-	flow: "paginated" | "scrolled";
+  width: number;
+  height: number;
+  spread: "none" | "auto";
+  flow: "paginated" | "scrolled";
 }
 
 interface TocItem {
-	id: string;
-	href: string;
-	label: string;
-	children: TocItem[];
+  id: string;
+  href: string;
+  label: string;
+  children: TocItem[];
 }
 
 interface BookMetadata {
-	title: string;
-	author: string;
-	language?: string;
+  title: string;
+  author: string;
+  language?: string;
 }
 ```
 
@@ -56,104 +61,124 @@ interface BookMetadata {
 
 ```ts
 interface IRendition {
-	display(target?: string): Promise<void>;
-	next(): Promise<void>;
-	prev(): Promise<void>;
-	resize(width: number, height: number): void;
-	destroy(): void;
+  display(target?: string): Promise<void>;
+  next(): Promise<void>;
+  prev(): Promise<void>;
+  resize(width: number, height: number): void;
+  destroy(): void;
 
-	// Themes & styling
-	setBodyStyles(styles: Record<string, string>): void;
-	injectStylesheet(css: string, key: string): void;
+  // Themes & styling
+  setBodyStyles(styles: Record<string, string>): void;
+  injectStylesheet(css: string, key: string): void;
 
-	// Annotations
-	addHighlight(
-		cfiRange: string,
-		data: unknown,
-		color: string,
-		opacity: number,
-		onClick?: (e: MouseEvent) => void,
-	): void;
-	removeHighlight(cfiRange: string): void;
-	clearHighlights(): void;
+  // Annotations
+  addHighlight(cfiRange: string, data: unknown, color: string, opacity: number, onClick?: (e: MouseEvent) => void): void;
+  removeHighlight(cfiRange: string): void;
+  clearHighlights(): void;
 
-	// State
-	getCurrentLocation(): ReaderLocation | null;
-	getSpineEnd(): string | null; // href of last spine item
+  // State
+  getCurrentLocation(): ReaderLocation | null;
+  getContents(): ContentAccessor[];
 
-	// Events
-	on(event: "relocated", cb: (location: ReaderLocation) => void): void;
-	on(
-		event: "selected",
-		cb: (cfiRange: string, selection: SelectionInfo) => void,
-	): void;
-	on(event: "rendered", cb: () => void): void;
-	on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
-	off(event: string, cb: unknown): void;
+  // Locations
+  generateLocations(chars: number): Promise<void>;
+  areLocationsReady(): boolean;
+  percentageFromCfi(cfi: string): number | null;
+  cfiFromPercentage(pct: number): string | null;
+
+  // Events
+  on(event: "relocated", cb: (location: ReaderLocation) => void): void;
+  on(event: "selected", cb: (cfiRange: string, selection: SelectionInfo) => void): void;
+  on(event: "rendered", cb: () => void): void;
+  on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
+  on(event: "click", cb: () => void): void;
+  off(event: string, cb: unknown): void;
 }
 
 interface ReaderLocation {
-	cfi: string;
-	href: string;
-	percentage: number;
-	page: number;
-	totalPages: number;
+  cfi: string;
+  href: string;
+  percentage: number;        // 0-1 from locations API
+  displayed?: { page: number; total: number };
 }
 
 interface SelectionInfo {
-	text: string;
-	window: Window;
-	document: Document;
-	clearSelection(): void;
+  text: string;
+  window: Window;
+  document: Document;
+  clearSelection(): void;
+}
+
+interface ContentAccessor {
+  document: Document;
+  window: Window;
 }
 ```
 
-### `ITextResolver` — replaces one-shot `ePub()` + `book.getRange()`
+### `ITextResolver` — for embed text extraction
 
 ```ts
 interface ITextResolver {
-	resolve(data: ArrayBuffer, cfiRange: string): Promise<string | null>;
+  resolve(data: ArrayBuffer, cfiRange: string): Promise<string | null>;
 }
 ```
 
-## Migration Steps
+## Implementation Steps
 
-### Step 1: Create interfaces (`engine/types.ts`)
+### Step 1: Create interfaces (`engine/types.ts`) ✅
+### Step 2: Create epub.js adapter (`engine/epubjs-engine.ts`) ✅
+### Step 3: Create factory (`engine/engine-factory.ts`) ✅
+### Step 4: Update consumers ✅
+- `epub-renderer.ts` — fully migrated to `IBookEngine` + `IRendition`
+- `highlight-manager.ts` — uses `IRendition.addHighlight/removeHighlight`
+- `epub-view.ts` — uses `ReaderLocation`, `SelectionInfo`, `TocItem`
+- `toc-panel.ts` — uses `TocItem` instead of `NavItem`
+- `vim-bindings.ts` — uses `IRendition` via renderer
+- `hover-sync.ts` — removed direct `EpubRenderer` dependency
+- **No file imports from `epubjs` except `engine/epubjs-engine.ts`**
+### Step 5: Add settings toggle ✅
+- Added `engineType: "epubjs" | "native"` to settings interface + defaults
+- Added dropdown in Reader settings section
+- Requires reopening the book to take effect
 
-Define all interfaces above. No implementation changes yet.
+### Step 6: Implement native engine (`engine/native-engine.ts`) ✅
+- Uses EPUB.js only for parsing (Book, Section, EpubCFI, archive)
+- Renders sections as direct DOM nodes in a single iframe
+- CSS multi-column layout for pagination (`column-width`, `column-fill`)
+- Scoped CSS: rewrites book selectors with `.__scope_N` prefix
+- Translates `-epub-*` CSS properties to standard equivalents
+- Handles section XHTML parsing, style extraction, and DOM insertion
+- CFI generation via `section.cfiFromRange()`/`section.cfiFromElement()`
+- Highlight support via `<mark>` wrapper elements
+- Event forwarding (keyboard, click, selection) from iframe to parent
 
-### Step 2: Create epub.js adapter (`engine/epubjs-engine.ts`)
+## Native Engine Design (Zotero-Inspired)
 
-Wrap existing epub.js code to implement `IBookEngine` and `IRendition`.
-Move EPUB.js imports here — this becomes the ONLY file that imports from `epubjs`.
+### Key techniques from Zotero:
+1. **Single iframe, direct DOM** — all sections rendered as DOM nodes, not separate iframes
+2. **CSS multi-column pagination** — `column-width: 800px; column-fill: auto; column-gap: 60px`
+3. **CSSRewriter** — scope book CSS selectors, convert absolute sizes to `rem`, translate `-epub-*` properties
+4. **Virtual section mounting** — only mount current section in paginated mode
+5. **Shadow DOM annotations** — SVG highlights in Shadow DOM, isolated from book CSS
+6. **Smart dark mode** — force text to `inherit`, backgrounds to `transparent`
 
-### Step 3: Create factory (`engine/engine-factory.ts`)
-
-```ts
-function createEngine(type: "epubjs" | "readium"): IBookEngine {
-	if (type === "readium") return new ReadiumEngine();
-	return new EpubJsEngine();
+### Pagination via CSS columns:
+```css
+.sections-container {
+  column-fill: auto;
+  column-width: var(--page-width);
+  column-gap: 60px;
+  height: 100%;
+  overflow: hidden;
 }
 ```
+Page turns = scroll `scrollLeft` by `spreadWidth` increments.
 
-### Step 4: Update consumers
-
-- `epub-renderer.ts` → uses `IBookEngine` + `IRendition` instead of `Book` + `Rendition`
-- `highlight-manager.ts` → uses `IRendition.addHighlight/removeHighlight` instead of `rendition.annotations.*`
-- `epub-view.ts` → uses `SelectionInfo` instead of `Contents`
-- `vim-bindings.ts` → uses `IRendition` instead of `Rendition`
-- `toc-panel.ts` → uses `TocItem` instead of `NavItem`
-- `epub-text-cache.ts` → uses `ITextResolver` instead of `ePub()` + `book.getRange()`
-
-### Step 5: Add settings toggle
-
-```ts
-engineType: "epubjs" | "readium"; // default: "epubjs"
-```
-
-### Step 6: Implement Readium adapter (`engine/readium-engine.ts`)
-
-Wrap `@readium/navigator` + `@readium/shared` to implement the same interfaces.
+### Font scaling via rem:
+Convert all absolute font sizes in book CSS to `rem`:
+- `12px` → `0.923rem` (based on 13pt base)
+- User's font size setting changes `html { font-size: Xpx }` on the iframe
+- All relative sizes scale uniformly
 
 ## Files That Need Changes
 
@@ -169,15 +194,3 @@ Wrap `@readium/navigator` + `@readium/shared` to implement the same interfaces.
 | `link-copy.ts`         | None                              | No change                              |
 | `backlink-scanner.ts`  | None                              | No change                              |
 | `settings.ts`          | None                              | Add `engineType` setting               |
-
-## Key Design Decisions
-
-1. **CFI as the universal position format** — both epub.js and Readium understand EPUB CFIs. Our link syntax (`#cfi=...`) stays the same regardless of engine.
-
-2. **Factory pattern, not dependency injection** — simpler for a plugin. The factory is called once at plugin load.
-
-3. **Adapters own all engine-specific imports** — `epubjs-engine.ts` is the ONLY file that imports from `epubjs`. `readium-engine.ts` is the ONLY file that imports from `@readium/*`.
-
-4. **Events normalized** — both engines emit the same event shapes (`ReaderLocation`, `SelectionInfo`). The adapter handles translation.
-
-5. **Highlights abstracted** — `addHighlight(cfi, data, color, opacity)` replaces the complex `rendition.annotations.highlight(cfi, data, cb, class, styles)` API.
