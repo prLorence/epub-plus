@@ -1,7 +1,7 @@
 {
 	"id": "epub-plus",
 	"name": "EPUB++",
-	"version": "1.0.3",
+	"version": "2.0.0",
 	"minAppVersion": "1.12.7",
 	"description": "Read EPUB files with deep linking, backlink highlights, and CFI-based annotations.",
 	"author": "",
