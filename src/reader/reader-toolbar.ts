@@ -11,6 +11,7 @@ export interface ToolbarCallbacks {
 	onFontSizeChange: (delta: number) => void;
 	onGoBack?: () => void;
 	onLinkNote?: () => void;
+	onResetView?: () => void;
 }
 
 export class ReaderToolbar {
@@ -102,6 +103,12 @@ export class ReaderToolbar {
 		if (this.callbacks.onBacklinksToggle) {
 			this.createButton(right, "link", "Toggle backlinks panel", () =>
 				this.callbacks.onBacklinksToggle!(), true,
+			);
+		}
+
+		if (this.callbacks.onResetView) {
+			this.createButton(right, "refresh-cw", "Reset view", () =>
+				this.callbacks.onResetView!(), true,
 			);
 		}
 

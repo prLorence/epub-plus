@@ -288,6 +288,7 @@ export class EpubView extends FileView {
 				onBookmark: () => this.bookmarkPanel?.toggle(),
 				onFontSizeChange: (delta) => this.changeFontSize(delta),
 				onGoBack: () => this.goBack(),
+				onResetView: () => this.resetView(),
 				onLinkNote: () => this.linkCompanionNote(),
 			},
 		);
@@ -1566,6 +1567,19 @@ export class EpubView extends FileView {
 		if (this.navHistory.length === 0) {
 			this.toolbar?.showBackButton(false);
 		}
+	}
+
+	private resetView(): void {
+		if (!this.renderer) return;
+		const currentCfi = this.renderer.getRendition()?.getCurrentLocation()?.cfi ?? null;
+		this.exitExtendMode();
+		this.renderer.savePositionForResize();
+		this.renderer.forceResize();
+		if (currentCfi) {
+			this.suppressHistoryPush = true;
+			void this.renderer.display(currentCfi);
+		}
+		this.showReaderToast("View reset");
 	}
 
 	private jumpToPercentage(pct: number): void {
