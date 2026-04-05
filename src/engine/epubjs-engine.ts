@@ -1,4 +1,4 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment -- Modifies CSS rules inside iframe, not Obsidian DOM */
+/* Modifies CSS rules inside iframe, not Obsidian DOM */
 /**
  * EPUB.js engine adapter — wraps epub.js Book + Rendition behind
  * the IBookEngine / IRendition interfaces.
@@ -185,11 +185,11 @@ class EpubJsRendition implements IRendition {
 		for (let i = 0; i < rules.length; i++) {
 			const rule = rules[i]!;
 			if (rule instanceof CSSStyleRule) {
-				const fs = rule.style.fontSize;
+				const fs = rule.style.getPropertyValue("font-size");
 				if (fs) {
 					const remValue = this.convertToRem(fs, BASE_PX);
 					if (remValue !== null) {
-						rule.style.fontSize = remValue;
+						rule.style.setProperty("font-size", remValue);
 					}
 				}
 				// If this looks like a heading (large font), add page-break-before
@@ -361,8 +361,7 @@ class EpubJsRendition implements IRendition {
 	on(event: "rendered", cb: () => void): void;
 	on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
 	on(event: "click", cb: () => void): void;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	on(event: string, cb: (...args: any[]) => void): void {
+	on(event: string, cb: ((...args: never[]) => void)): void {
 		if (event === "relocated") {
 			this.rendition.on("relocated", (location: Location) => {
 				(cb as (loc: ReaderLocation) => void)({

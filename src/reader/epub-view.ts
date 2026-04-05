@@ -332,13 +332,13 @@ export class EpubView extends FileView {
 					void this.saveBookmarks();
 					new Notice("Bookmark removed");
 				},
+				onBookmarkAdd: () => this.toggleBookmark(),
 			});
 		}
 
 		// Load bookmarks
-		void this.loadBookmarks().then(() => {
-			this.bookmarkPanel?.setBookmarks(this.bookmarks);
-		});
+		this.loadBookmarks();
+		this.bookmarkPanel?.setBookmarks(this.bookmarks);
 
 		// Search panel
 		const searchEl = this.containerEl_?.querySelector(
@@ -694,6 +694,25 @@ export class EpubView extends FileView {
 			void this.saveInlineNote(bl, textarea.value);
 			editor.remove();
 		});
+
+		// On mobile, lock the rendition height before focusing so the
+		// virtual keyboard doesn't shrink/reflow the reader content.
+		if (Platform.isMobile && this.renditionEl) {
+			const lockedHeight = this.renditionEl.clientHeight;
+			this.renditionEl.style.minHeight = `${lockedHeight}px`;
+			const unlockHeight = () => {
+				if (this.renditionEl) {
+					this.renditionEl.style.minHeight = "";
+				}
+			};
+			textarea.addEventListener("blur", unlockHeight, { once: true });
+			// Also unlock when the editor is removed
+			const origRemove = editor.remove.bind(editor);
+			editor.remove = () => {
+				unlockHeight();
+				origRemove();
+			};
+		}
 
 		// Focus the textarea
 		setTimeout(() => textarea.focus(), 50);
@@ -1077,7 +1096,12 @@ export class EpubView extends FileView {
 		const rendition = this.renderer?.getRendition();
 		if (!rendition) return;
 
+		// Save the current position so we can restore it if applying
+		// the highlight causes epub.js to navigate (cross-page selections).
+		const currentCfi = rendition.getCurrentLocation()?.cfi ?? null;
+
 		try {
+			this.suppressHistoryPush = true;
 			rendition.addHighlight(
 				cfiRange,
 				{},
@@ -1088,6 +1112,15 @@ export class EpubView extends FileView {
 			);
 		} catch {
 			// ignore CFI resolution errors
+		}
+
+		// Restore position if the highlight application navigated away
+		if (currentCfi) {
+			const afterCfi = rendition.getCurrentLocation()?.cfi ?? null;
+			if (afterCfi && afterCfi !== currentCfi) {
+				this.suppressHistoryPush = true;
+				void this.renderer?.display(currentCfi);
+			}
 		}
 	}
 
@@ -1262,7 +1295,7 @@ export class EpubView extends FileView {
 		});
 	}
 
-	private async loadBookmarks(): Promise<void> {
+	private loadBookmarks(): void {
 		if (!this.file) return;
 		if (this.plugin.settings.progressStorage !== "frontmatter") return;
 

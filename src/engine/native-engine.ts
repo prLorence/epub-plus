@@ -1,4 +1,4 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment -- Iframe DOM not managed by Obsidian */
+/* Iframe DOM not managed by Obsidian */
 /**
  * Native rendering engine — Zotero-inspired approach.
  *
@@ -105,8 +105,7 @@ class NativeRendition implements IRendition {
 	private totalPages = 0;
 	private currentCfi = "";
 	private currentHref = "";
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	private listeners = new Map<string, Array<(...args: any[]) => void>>();
+	private listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 	private highlights = new Map<string, { elements: HTMLElement[]; data: unknown }>();
 
 	constructor(
@@ -334,7 +333,7 @@ class NativeRendition implements IRendition {
 				root.style.setProperty("--content-font-family", familyMatch[1]!.trim());
 				const wrappers = doc.querySelectorAll(".section-wrapper");
 				for (let i = 0; i < wrappers.length; i++) {
-					(wrappers[i] as HTMLElement).style.fontFamily = `var(--content-font-family)`;
+					(wrappers[i] as HTMLElement).style.setProperty("font-family", "var(--content-font-family)");
 				}
 			}
 			return;
@@ -464,8 +463,7 @@ class NativeRendition implements IRendition {
 	on(event: "rendered", cb: () => void): void;
 	on(event: "keydown", cb: (e: KeyboardEvent) => void): void;
 	on(event: "click", cb: () => void): void;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	on(event: string, cb: (...args: any[]) => void): void {
+	on(event: string, cb: ((...args: never[]) => void)): void {
 		let list = this.listeners.get(event);
 		if (!list) {
 			list = [];
@@ -483,12 +481,10 @@ class NativeRendition implements IRendition {
 
 	// ── Private ──
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	private emit(event: string, ...args: any[]): void {
+	private emit(event: string, ...args: unknown[]): void {
 		const list = this.listeners.get(event);
 		if (!list) return;
 		for (const cb of list) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 			cb(...args);
 		}
 	}
@@ -845,10 +841,10 @@ class NativeRendition implements IRendition {
 			const mark = doc.createElement("mark");
 			mark.className = "html-plus-highlight";
 			mark.dataset["epubcfi"] = cfi;
-			mark.style.backgroundColor = color;
-			mark.style.opacity = String(opacity);
-			mark.style.mixBlendMode = "multiply";
-			mark.style.borderRadius = "2px";
+			mark.style.setProperty("background-color", color);
+			mark.style.setProperty("opacity", String(opacity));
+			mark.style.setProperty("mix-blend-mode", "multiply");
+			mark.style.setProperty("border-radius", "2px");
 			range.surroundContents(mark);
 			elements.push(mark);
 		} catch {
@@ -858,9 +854,9 @@ class NativeRendition implements IRendition {
 				const mark = doc.createElement("mark");
 				mark.className = "html-plus-highlight";
 				mark.dataset["epubcfi"] = cfi;
-				mark.style.backgroundColor = color;
-				mark.style.opacity = String(opacity);
-				mark.style.mixBlendMode = "multiply";
+				mark.style.setProperty("background-color", color);
+				mark.style.setProperty("opacity", String(opacity));
+				mark.style.setProperty("mix-blend-mode", "multiply");
 				mark.appendChild(fragment);
 				range.insertNode(mark);
 				elements.push(mark);

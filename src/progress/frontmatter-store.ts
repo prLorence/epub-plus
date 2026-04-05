@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access -- Frontmatter is Record<string, any> */
 import { App, TFile, TFolder } from "obsidian";
 import type { ReadingProgress } from "../types";
 
@@ -32,7 +31,7 @@ export class FrontmatterProgressStore {
 		return this.noteLinks.get(epubPath) ?? epubPath.replace(/\.epub$/i, "");
 	}
 
-	async get(epubPath: string): Promise<ReadingProgress | undefined> {
+	get(epubPath: string): ReadingProgress | undefined {
 		const notePath = this.getCompanionNotePath(epubPath) + ".md";
 		const file = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(file instanceof TFile)) return undefined;
@@ -79,10 +78,10 @@ const progress = fm["epub-progress"] as Record<string, string | number> | undefi
 		});
 	}
 
-	async getMostRecent(): Promise<{
+	getMostRecent(): {
 		path: string;
 		progress: ReadingProgress;
-	} | null> {
+	} | null {
 		let latest: { path: string; progress: ReadingProgress } | null = null;
 
 		for (const file of this.app.vault.getMarkdownFiles()) {

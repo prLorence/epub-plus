@@ -10,6 +10,7 @@ export interface Bookmark {
 export interface BookmarkPanelCallbacks {
 	onBookmarkClick: (bookmark: Bookmark) => void;
 	onBookmarkDelete: (bookmark: Bookmark) => void;
+	onBookmarkAdd?: () => void;
 }
 
 /**
@@ -62,7 +63,20 @@ export class BookmarkPanel {
 			text: "0",
 		});
 
-		const closeBtn = header.createEl("button", {
+		const headerRight = header.createDiv({
+			cls: "epub-plus-bm-header-right",
+		});
+
+		if (this.callbacks.onBookmarkAdd) {
+			const addBtn = headerRight.createEl("button", {
+				cls: "epub-plus-anno-close",
+				text: "+",
+				title: "Add bookmark at current position",
+			});
+			addBtn.addEventListener("click", () => this.callbacks.onBookmarkAdd?.());
+		}
+
+		const closeBtn = headerRight.createEl("button", {
 			cls: "epub-plus-anno-close",
 			text: "\u00d7",
 		});

@@ -133,8 +133,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Rendering engine")
 			.setDesc(
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- Product names
-				"epub.js: stable, standard rendering. Native: experimental, preserves book styling better. Requires reopening the book.",
+				"Choose between the stable engine or the experimental native engine that preserves book styling better. Requires reopening the book.",
 			)
 			.addDropdown((d) =>
 				d

@@ -92,8 +92,9 @@ export class HighlightManager {
 	}
 
 	/**
-	 * Attach right-click listeners to highlight elements in the content.
-	 * Must be called after highlights are applied.
+	 * Attach interaction listeners to highlight elements in the content.
+	 * On desktop: right-click for context menu.
+	 * On mobile: tap for inline note editor, long-press for context menu.
 	 */
 	private attachContextMenuListeners(): void {
 		const rendition = this.getRendition();
@@ -117,6 +118,18 @@ export class HighlightManager {
 					}
 				});
 				if (Platform.isMobile) {
+					// Tap to open inline note editor
+					this.addTapHandler(el, (touch) => {
+						const cfi = el.getAttribute("data-epubcfi") ?? "";
+						const bls = this.backlinkMap.get(cfi);
+						if (bls) {
+							this.callbacks.onHighlightClick(bls, new MouseEvent("click", {
+								clientX: touch.clientX,
+								clientY: touch.clientY,
+							}));
+						}
+					});
+					// Long-press for context menu
 					addLongPress(el, (touch) => {
 						const cfi = el.getAttribute("data-epubcfi") ?? "";
 						const bls = this.backlinkMap.get(cfi);
@@ -130,6 +143,42 @@ export class HighlightManager {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Add a quick-tap handler to an element. Fires only if the touch
+	 * is short (<300ms) and doesn't move (distinguishes from long-press
+	 * and scroll gestures).
+	 */
+	private addTapHandler(
+		el: HTMLElement,
+		callback: (touch: { clientX: number; clientY: number }) => void,
+	): void {
+		let startX = 0;
+		let startY = 0;
+		let startTime = 0;
+
+		el.addEventListener("touchstart", (e) => {
+			if (e.touches.length !== 1) return;
+			startX = e.touches[0]!.clientX;
+			startY = e.touches[0]!.clientY;
+			startTime = Date.now();
+		}, { passive: true });
+
+		el.addEventListener("touchend", (e) => {
+			if (e.changedTouches.length !== 1) return;
+			const dx = e.changedTouches[0]!.clientX - startX;
+			const dy = e.changedTouches[0]!.clientY - startY;
+			const dt = Date.now() - startTime;
+			// Quick, stationary tap (not a scroll or long-press)
+			if (dt < 300 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+				e.preventDefault();
+				callback({
+					clientX: e.changedTouches[0]!.clientX,
+					clientY: e.changedTouches[0]!.clientY,
+				});
+			}
+		});
 	}
 
 	clearAll(): void {

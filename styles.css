@@ -599,6 +599,12 @@
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.epub-plus-bm-header-right {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
 .epub-plus-bm-list {
 	flex: 1;
 	overflow-y: auto;
@@ -1136,10 +1142,11 @@
 	z-index: 1;
 }
 
-/* Bottom bar: taller for touch */
+/* Bottom bar: taller for touch, lifted above Obsidian's mobile nav */
 .epub-plus-root.is-mobile .epub-plus-bottom-bar {
 	height: 36px;
 	font-size: 12px;
+	margin-bottom: 48px;
 }
 
 /* Touch feedback: add :active states alongside :hover */
