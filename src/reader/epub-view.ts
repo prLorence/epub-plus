@@ -904,7 +904,16 @@ export class EpubView extends FileView {
 	// ── Event Handlers ──
 
 	private handleRendered(): void {
-		// EPUB.js rendered hook — reserved for future use
+		// Attach swipe navigation inside the iframe so gestures on
+		// book content are detected (not just on the outer container).
+		if (Platform.isMobile) {
+			const contents = this.renderer?.getRendition()?.getContents() ?? [];
+			for (const content of contents) {
+				if ((content.document as unknown as { _swipeBound?: boolean })._swipeBound) continue;
+				(content.document as unknown as { _swipeBound?: boolean })._swipeBound = true;
+				this.attachSwipeListeners(content.document.documentElement);
+			}
+		}
 	}
 
 	private handleRelocated(location: ReaderLocation): void {
@@ -1479,6 +1488,14 @@ export class EpubView extends FileView {
 	}
 
 	private setupSwipeNavigation(el: HTMLElement): void {
+		this.attachSwipeListeners(el);
+	}
+
+	/**
+	 * Attach swipe listeners to an element (outer container or iframe body).
+	 * Handles both horizontal and vertical swipes for page navigation.
+	 */
+	private attachSwipeListeners(el: HTMLElement): void {
 		let startX = 0;
 		let startY = 0;
 		let startTime = 0;
@@ -1495,9 +1512,19 @@ export class EpubView extends FileView {
 			const dx = e.changedTouches[0]!.clientX - startX;
 			const dy = e.changedTouches[0]!.clientY - startY;
 			const dt = Date.now() - startTime;
-			// Horizontal, fast enough, far enough
-			if (Math.abs(dx) > 50 && Math.abs(dy) < Math.abs(dx) && dt < 500) {
+
+			if (dt > 500) return; // Too slow
+
+			const absDx = Math.abs(dx);
+			const absDy = Math.abs(dy);
+
+			if (absDx > 50 && absDx > absDy) {
+				// Horizontal swipe — left = next, right = prev
 				if (dx < 0) this.nextPage();
+				else this.prevPage();
+			} else if (absDy > 50 && absDy > absDx) {
+				// Vertical swipe — up = next, down = prev
+				if (dy < 0) this.nextPage();
 				else this.prevPage();
 			}
 		}, { passive: true });
