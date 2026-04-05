@@ -1170,6 +1170,47 @@
 	color: var(--text-normal);
 }
 
+/* ── Cross-page selection extend banner ── */
+
+.epub-plus-extend-banner {
+	position: absolute;
+	top: 52px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 25;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	background: var(--interactive-accent, #7b6cd9);
+	color: #fff;
+	padding: 8px 16px;
+	border-radius: 8px;
+	font-size: 12px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	max-width: calc(100vw - 32px);
+	white-space: nowrap;
+}
+
+.epub-plus-extend-banner span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.epub-plus-extend-cancel {
+	background: rgba(255, 255, 255, 0.2);
+	border: none;
+	color: #fff;
+	padding: 4px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 12px;
+	flex-shrink: 0;
+}
+
+.epub-plus-extend-cancel:active {
+	background: rgba(255, 255, 255, 0.35);
+}
+
 /* ── Utility ── */
 
 .epub-plus-hidden {

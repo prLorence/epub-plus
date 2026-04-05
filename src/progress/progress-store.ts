@@ -18,9 +18,10 @@ export class ProgressStore {
 		private vault: Vault,
 		app: App,
 		storageMethod: StorageMethod = "frontmatter",
+		savedLinks?: Record<string, string>,
 	) {
 		this.storageMethod = storageMethod;
-		this.frontmatterStore = new FrontmatterProgressStore(app);
+		this.frontmatterStore = new FrontmatterProgressStore(app, savedLinks);
 	}
 
 	setStorageMethod(method: StorageMethod): void {
@@ -33,6 +34,10 @@ export class ProgressStore {
 
 	getCompanionNotePath(epubPath: string): string {
 		return this.frontmatterStore.getCompanionNotePath(epubPath);
+	}
+
+	getNoteLinkEntries(): Record<string, string> {
+		return this.frontmatterStore.getNoteLinkEntries();
 	}
 
 	async load(): Promise<void> {

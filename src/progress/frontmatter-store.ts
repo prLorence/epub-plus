@@ -21,10 +21,24 @@ export class FrontmatterProgressStore {
 	/** Maps epub path → custom companion note path */
 	private noteLinks = new Map<string, string>();
 
-	constructor(private app: App) {}
+	constructor(
+		private app: App,
+		savedLinks?: Record<string, string>,
+	) {
+		if (savedLinks) {
+			for (const [k, v] of Object.entries(savedLinks)) {
+				this.noteLinks.set(k, v);
+			}
+		}
+	}
 
 	setCompanionNote(epubPath: string, notePath: string): void {
 		this.noteLinks.set(epubPath, notePath);
+	}
+
+	/** Return the noteLinks map as a plain object for persistence. */
+	getNoteLinkEntries(): Record<string, string> {
+		return Object.fromEntries(this.noteLinks);
 	}
 
 	getCompanionNotePath(epubPath: string): string {

@@ -64,6 +64,13 @@ export class EpubView extends FileView {
 		text: string;
 		selection: SelectionInfo;
 	} | null = null;
+	/** Cross-page selection extension state. */
+	private extendingSelection: {
+		startCfiRange: string;
+		startText: string;
+		startContext: string;
+	} | null = null;
+	private extendBannerEl: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -93,6 +100,7 @@ export class EpubView extends FileView {
 		});
 		this.scope.register([], "Escape", () => {
 			this.pendingSelection = null;
+			this.exitExtendMode();
 			// Don't consume the event — let Obsidian handle Escape too
 			return true;
 		});
@@ -368,6 +376,7 @@ export class EpubView extends FileView {
 		}
 		this.activeDismissHandlers = [];
 
+		this.exitExtendMode();
 		await this.plugin.progressStore.save();
 		this.teardownBacklinks();
 		this.narrowObserver?.disconnect();
@@ -1013,7 +1022,8 @@ export class EpubView extends FileView {
 		this.pendingSelection = { cfiRange, text, selection: selInfo };
 
 		// Quick-add mode: skip popup, use default color instantly
-		if (this.plugin.settings.autoCopyOnHighlight) {
+		// (but not when extending a cross-page selection)
+		if (this.plugin.settings.autoCopyOnHighlight && !this.extendingSelection) {
 			const defaultColor = this.plugin.settings.colorPalette.find(
 				(c) => c.name === this.plugin.settings.defaultHighlightColor,
 			) ?? this.plugin.settings.colorPalette[0];
@@ -1056,6 +1066,33 @@ export class EpubView extends FileView {
 		// Capture context before the selection gets cleared
 		const context = this.extractContext(range, text);
 
+		// If we're in extend mode, this is the end selection
+		const extending = this.extendingSelection;
+		if (extending) {
+			const combinedText = extending.startText + " [...] " + text;
+			const combinedContext = extending.startContext;
+
+			showColorPalettePopup(doc, rect, palette, {
+				onColorSelect: (color: PaletteColor, style) => {
+					// Highlight both segments
+					this.createHighlightAnnotation(extending.startCfiRange, color, style);
+					this.createHighlightAnnotation(cfiRange, color, style);
+					selInfo.clearSelection();
+					void this.copyWithColor(extending.startCfiRange, combinedText, color.name, combinedContext);
+					this.exitExtendMode();
+				},
+				onAddToNote: (color: PaletteColor, style) => {
+					this.createHighlightAnnotation(extending.startCfiRange, color, style);
+					this.createHighlightAnnotation(cfiRange, color, style);
+					selInfo.clearSelection();
+					void this.addToActiveNote(extending.startCfiRange, combinedText, color.name, combinedContext);
+					this.exitExtendMode();
+				},
+				// No extend button when already extending
+			});
+			return;
+		}
+
 		showColorPalettePopup(doc, rect, palette, {
 			onColorSelect: (color: PaletteColor, style) => {
 				this.createHighlightAnnotation(cfiRange, color, style);
@@ -1067,7 +1104,45 @@ export class EpubView extends FileView {
 				selInfo.clearSelection();
 				void this.addToActiveNote(cfiRange, text, color.name, context);
 			},
+			onExtendSelection: () => {
+				this.enterExtendMode(cfiRange, text, context);
+				selInfo.clearSelection();
+			},
 		});
+	}
+
+	private enterExtendMode(
+		startCfiRange: string,
+		startText: string,
+		startContext: string,
+	): void {
+		this.extendingSelection = { startCfiRange, startText, startContext };
+
+		// Show a sticky banner
+		if (this.renditionEl && !this.extendBannerEl) {
+			this.extendBannerEl = this.contentEl.createDiv({
+				cls: "epub-plus-extend-banner",
+			});
+			this.extendBannerEl.createEl("span", {
+				text: "Extending selection — swipe to next page, then select the end point",
+			});
+			const cancelBtn = this.extendBannerEl.createEl("button", {
+				cls: "epub-plus-extend-cancel",
+				text: "Cancel",
+			});
+			cancelBtn.addEventListener("click", () => this.exitExtendMode());
+		}
+
+		// Turn to the next page so the user can select the end point
+		this.nextPage();
+	}
+
+	private exitExtendMode(): void {
+		this.extendingSelection = null;
+		if (this.extendBannerEl) {
+			this.extendBannerEl.remove();
+			this.extendBannerEl = null;
+		}
 	}
 
 	private extractContext(range: Range, text: string): string {
@@ -1503,6 +1578,10 @@ export class EpubView extends FileView {
 			if (!this.file) return;
 			// Tell the frontmatter store to use this note
 			this.plugin.progressStore.setCompanionNote(this.file.path, notePath);
+			// Persist the link so it survives plugin reloads
+			this.plugin.settings.companionNoteLinks =
+				this.plugin.progressStore.getNoteLinkEntries();
+			void this.plugin.saveSettings();
 			// Save current progress to the new companion note
 			const current = this.plugin.progressStore.get(this.file.path);
 			if (current) {

@@ -35,6 +35,7 @@ export default class EpubPlusPlugin extends Plugin {
 			this.app.vault,
 			this.app,
 			this.settings.progressStorage,
+			this.settings.companionNoteLinks,
 		);
 		await this.progressStore.load();
 

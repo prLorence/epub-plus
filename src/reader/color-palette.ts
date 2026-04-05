@@ -4,6 +4,7 @@ import type { PaletteColor } from "../types";
 export interface PaletteCallbacks {
 	onColorSelect: (color: PaletteColor, style?: "highlight" | "underline") => void;
 	onAddToNote: (color: PaletteColor, style?: "highlight" | "underline") => void;
+	onExtendSelection?: () => void;
 }
 
 /**
@@ -99,6 +100,39 @@ export function showColorPalettePopup(
 		ubs.background = annotationStyle === "underline" ? "#555" : "transparent";
 	});
 	popup.appendChild(ulBtn);
+
+	// Extend selection button (mobile only, for cross-page highlights)
+	if (Platform.isMobile && callbacks.onExtendSelection) {
+		const extSep = doc.createElement("span");
+		extSep.style.width = "1px";
+		extSep.style.height = "18px";
+		extSep.style.background = "#555";
+		extSep.style.margin = "0 4px";
+		popup.appendChild(extSep);
+
+		const extBtn = doc.createElement("button");
+		extBtn.className = "epub-plus-popup-add-btn";
+		extBtn.textContent = "Extend →";
+		extBtn.title = "Extend selection to next page";
+
+		const ebs = extBtn.style;
+		ebs.background = "none";
+		ebs.border = "none";
+		ebs.color = "#ccc";
+		ebs.cursor = "pointer";
+		ebs.fontSize = "11px";
+		ebs.padding = "2px 6px";
+		ebs.borderRadius = "3px";
+
+		extBtn.addEventListener("mouseenter", () => { ebs.background = "#444"; });
+		extBtn.addEventListener("mouseleave", () => { ebs.background = "none"; });
+		extBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			callbacks.onExtendSelection!();
+			cleanup();
+		});
+		popup.appendChild(extBtn);
+	}
 
 	// Separator
 	const sep = doc.createElement("span");

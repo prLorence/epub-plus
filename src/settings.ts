@@ -50,6 +50,9 @@ export interface EpubPlusSettings {
 
 	// Keyboard & navigation
 	enableVimBindings: boolean;
+
+	// Companion note links (epub path → note path, persisted)
+	companionNoteLinks: Record<string, string>;
 }
 
 const DEFAULT_TEMPLATE =
@@ -87,6 +90,8 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	showBacklinkPanel: false,
 
 	enableVimBindings: false,
+
+	companionNoteLinks: {},
 };
 
 /**
