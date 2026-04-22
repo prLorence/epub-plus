@@ -120,11 +120,11 @@ export class ProgressStore {
 		return cached;
 	}
 
-	set(filePath: string, progress: ReadingProgress): void {
+	set(filePath: string, progress: ReadingProgress, skipPersist = false): void {
 		this.state[filePath] = progress;
 		this.dirty = true;
 
-		if (this.storageMethod === "frontmatter") {
+		if (!skipPersist && this.storageMethod === "frontmatter") {
 			// Debounce frontmatter writes — only write every 5 seconds
 			if (this.fmSaveTimer) clearTimeout(this.fmSaveTimer);
 			this.fmSaveTimer = setTimeout(() => {

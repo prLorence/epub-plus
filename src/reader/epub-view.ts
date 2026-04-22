@@ -415,10 +415,9 @@ export class EpubView extends FileView {
 		this.activeDismissHandlers = [];
 
 		this.exitExtendMode();
-		await this.plugin.progressStore.save();
 
-		// KOSync: push final progress on close
 		if (this.plugin.kosyncManager && this.fileData && file) {
+			// KOSync active: push final progress to server, skip local save
 			const progress = this.plugin.progressStore.get(file.path);
 			if (progress) {
 				void this.plugin.kosyncManager.pushProgress(
@@ -427,6 +426,8 @@ export class EpubView extends FileView {
 					progress,
 				);
 			}
+		} else {
+			await this.plugin.progressStore.save();
 		}
 		this.fileData = null;
 
@@ -976,14 +977,20 @@ export class EpubView extends FileView {
 			: 0;
 
 		// Deferred KOSync navigation — wait until locations are ready
-		if (locationsReady && this.pendingKosyncPercent !== null) {
+		if (this.pendingKosyncPercent !== null && locationsReady) {
 			const pct = this.pendingKosyncPercent;
 			this.pendingKosyncPercent = null;
-			const cfi = this.renderer?.cfiFromPercentage(pct);
-			if (cfi) {
-				this.suppressHistoryPush = true;
-				void this.renderer?.display(cfi);
-				return; // will re-enter handleRelocated after navigation
+			if (pct > 0) {
+				const cfi = this.renderer?.cfiFromPercentage(pct);
+				if (cfi) {
+					console.debug(
+						"[EPUB++] KoSync: navigating to pulled position:",
+						Math.round(pct * 100) + "%",
+					);
+					this.suppressHistoryPush = true;
+					void this.renderer?.display(cfi);
+					return; // will re-enter handleRelocated after navigation
+				}
 			}
 		}
 
@@ -1060,34 +1067,41 @@ export class EpubView extends FileView {
 		// Save reading progress — skip until locations are generated
 		// to avoid overwriting accurate saved data with 0%
 		const autoSave = this.plugin.settings.autoSaveProgress ?? true;
+		const useKosync = !!this.plugin.kosyncManager;
 		if (
 			this.file &&
 			autoSave &&
 			locationsReady &&
 			location.cfi
 		) {
-			this.plugin.progressStore.set(this.file.path, {
-				cfi: location.cfi,
-				percent: bookPercent,
-				updated: new Date().toISOString(),
-			});
+			// Always update in-memory progress (needed for continue-reading
+			// and the pull command). When KOSync is active, skip persisting
+			// to disk/frontmatter to avoid timestamp races.
+			this.plugin.progressStore.set(
+				this.file.path,
+				{
+					cfi: location.cfi,
+					percent: bookPercent,
+					updated: new Date().toISOString(),
+				},
+				useKosync,
+			);
 
-			// Only write to disk every N page turns
+			// Only sync every N page turns
 			this.pageTurnsSinceSave++;
 			const syncInterval =
 				this.plugin.settings.progressSyncPages ?? 5;
 			if (this.pageTurnsSinceSave >= syncInterval) {
 				this.pageTurnsSinceSave = 0;
-				console.debug(
-					"[EPUB++] Syncing progress to disk:",
-					bookPercent + "%",
-					location.cfi,
-				);
-				this.plugin.progressStore.scheduleSave();
 
-				// KOSync: push progress to server at the same interval
-				if (this.plugin.kosyncManager && this.fileData) {
-					void this.plugin.kosyncManager.pushProgress(
+				if (useKosync && this.fileData) {
+					// KOSync: push progress to server
+					console.debug(
+						"[EPUB++] KoSync: pushing progress:",
+						bookPercent + "%",
+						location.cfi,
+					);
+					void this.plugin.kosyncManager!.pushProgress(
 						this.file.path,
 						this.fileData,
 						{
@@ -1096,6 +1110,14 @@ export class EpubView extends FileView {
 							updated: new Date().toISOString(),
 						},
 					);
+				} else {
+					// Local-only: write to disk
+					console.debug(
+						"[EPUB++] Syncing progress to disk:",
+						bookPercent + "%",
+						location.cfi,
+					);
+					this.plugin.progressStore.scheduleSave();
 				}
 			}
 		}

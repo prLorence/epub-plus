@@ -56,50 +56,45 @@ export class KoSyncManager {
 			const { all } = this.computeHashes(filePath, fileData);
 			const localProgress = this.progressStore.get(filePath);
 
-			// Pull from ALL hashes, pick the most recent
-			let bestServer: KoSyncProgress | null = null;
+			// Pull from ALL hashes, preferring entries from other devices.
+			// The KOSync API stores one entry per hash — when we push, we
+			// overwrite the previous entry. So we look for any hash where
+			// a DIFFERENT device last pushed (that's the one to pull from).
+			let otherDevice: KoSyncProgress | null = null;
+			let ownDevice: KoSyncProgress | null = null;
 			for (const hash of all) {
 				const sp = await this.client.getProgress(hash);
-				if (
-					sp &&
-					(!bestServer ||
-						(sp.timestamp ?? 0) > (bestServer.timestamp ?? 0))
-				) {
-					bestServer = sp;
+				if (!sp) continue;
+
+				if (sp.device_id !== this.settings.kosyncDeviceId) {
+					if (
+						!otherDevice ||
+						(sp.timestamp ?? 0) > (otherDevice.timestamp ?? 0)
+					) {
+						otherDevice = sp;
+					}
+				} else {
+					if (
+						!ownDevice ||
+						(sp.timestamp ?? 0) > (ownDevice.timestamp ?? 0)
+					) {
+						ownDevice = sp;
+					}
 				}
 			}
 
-			if (!bestServer && !localProgress) {
-				return { action: "none" };
+			// If another device has progress, pull it (regardless of
+			// local timestamp — the user explicitly wants cross-device sync)
+			if (otherDevice) {
+				const converted = this.serverToLocal(otherDevice);
+				this.progressStore.set(filePath, converted);
+				this.progressStore.scheduleSave();
+				return { action: "pulled", progress: converted };
 			}
 
-			if (!bestServer && localProgress) {
+			// No other device — push local if we have it
+			if (localProgress) {
 				await this.pushToAllHashes(all, localProgress);
-				return { action: "pushed" };
-			}
-
-			if (bestServer && !localProgress) {
-				const converted = this.serverToLocal(bestServer);
-				this.progressStore.set(filePath, converted);
-				this.progressStore.scheduleSave();
-				return { action: "pulled", progress: converted };
-			}
-
-			// Both exist — compare timestamps
-			const serverTime = bestServer!.timestamp ?? 0;
-			const localTime = Math.floor(
-				new Date(localProgress!.updated).getTime() / 1000,
-			);
-
-			if (serverTime > localTime) {
-				const converted = this.serverToLocal(bestServer!);
-				this.progressStore.set(filePath, converted);
-				this.progressStore.scheduleSave();
-				return { action: "pulled", progress: converted };
-			}
-
-			if (localTime > serverTime) {
-				await this.pushToAllHashes(all, localProgress!);
 				return { action: "pushed" };
 			}
 
