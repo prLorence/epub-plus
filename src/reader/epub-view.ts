@@ -197,6 +197,16 @@ export class EpubView extends FileView {
 		return extension === "epub";
 	}
 
+	getFileData(): ArrayBuffer | null {
+		return this.fileData;
+	}
+
+	navigateToPercent(pct: number): void {
+		if (!this.renderer) return;
+		const cfi = this.renderer.cfiFromPercentage(Math.max(0, Math.min(1, pct)));
+		if (cfi) void this.renderer.display(cfi);
+	}
+
 	async onLoadFile(file: TFile): Promise<void> {
 		console.debug("[EPUB++] onLoadFile:", file.path);
 		try {

@@ -1,4 +1,4 @@
-import { Plugin, TFile, parseLinktext, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFile, parseLinktext, WorkspaceLeaf } from "obsidian";
 import type { PaneType, OpenViewState } from "obsidian";
 import { EPUB_VIEW_TYPE } from "./constants";
 import {
@@ -70,6 +70,18 @@ export default class EpubPlusPlugin extends Plugin {
 			id: "continue-reading",
 			name: "Continue reading",
 			callback: () => this.continueReading(),
+		});
+
+		this.addCommand({
+			id: "kosync-pull",
+			name: "Pull reading progress from KOSync server",
+			checkCallback: (checking) => {
+				const view = this.getActiveEpubView();
+				if (!view || !this.kosyncManager) return false;
+				if (checking) return true;
+				void this.pullKosyncProgress(view);
+				return true;
+			},
 		});
 
 		this.addSettingTab(new EpubPlusSettingTab(this.app, this));
@@ -218,6 +230,50 @@ export default class EpubPlusPlugin extends Plugin {
 			await leaf.openFile(file, {
 				eState: { subpath: `#cfi=${recent.progress.cfi}` },
 			});
+		}
+	}
+
+	private getActiveEpubView(): EpubView | null {
+		const leaf = this.app.workspace.activeLeaf;
+		if (leaf?.view instanceof EpubView) return leaf.view;
+		return null;
+	}
+
+	private async pullKosyncProgress(view: EpubView): Promise<void> {
+		if (!this.kosyncManager) {
+			new Notice("Enable KOSync and enter credentials first");
+			return;
+		}
+
+		const file = view.file;
+		const fileData = view.getFileData();
+		if (!file || !fileData) {
+			new Notice("No book is currently open");
+			return;
+		}
+
+		const result = await this.kosyncManager.syncOnOpen(
+			file.path,
+			fileData,
+		);
+
+		if (result.action === "pulled" && result.progress) {
+			if (result.progress.cfi) {
+				view.setEphemeralState({
+					subpath: `#cfi=${result.progress.cfi}`,
+				});
+			} else if (result.progress.percent > 0) {
+				view.navigateToPercent(result.progress.percent / 100);
+			}
+			new Notice(
+				`Synced to ${result.progress.percent}% from ${result.progress.updated}`,
+			);
+		} else if (result.action === "pushed") {
+			new Notice("Local progress is newer — pushed to server");
+		} else if (result.action === "error") {
+			new Notice("Failed to sync — check the console for details");
+		} else {
+			new Notice("Already in sync");
 		}
 	}
 }
