@@ -11,11 +11,13 @@ import { EpubView } from "./reader/epub-view";
 import { ProgressStore } from "./progress/progress-store";
 import { EpubTextCache } from "./embeds/epub-text-cache";
 import { registerEpubEmbedProcessor } from "./embeds/epub-embed-processor";
+import { KoSyncManager } from "./sync/kosync-manager";
 
 export default class EpubPlusPlugin extends Plugin {
 	settings: EpubPlusSettings = DEFAULT_SETTINGS;
 	progressStore: ProgressStore = null!;
 	textCache: EpubTextCache = null!;
+	kosyncManager: KoSyncManager | null = null;
 	private originalOpenLinkText:
 		| ((
 				linktext: string,
@@ -56,6 +58,14 @@ export default class EpubPlusPlugin extends Plugin {
 		this.patchOpenLinkText();
 		registerEpubEmbedProcessor(this);
 
+		// Generate a stable device ID on first run
+		if (!this.settings.kosyncDeviceId) {
+			this.settings.kosyncDeviceId = this.generateDeviceId();
+			await this.saveData(this.settings);
+		}
+
+		this.initKoSync();
+
 		this.addCommand({
 			id: "continue-reading",
 			name: "Continue reading",
@@ -67,6 +77,8 @@ export default class EpubPlusPlugin extends Plugin {
 
 	onunload(): void {
 		this.unpatchOpenLinkText();
+		this.kosyncManager?.clearCache();
+		this.kosyncManager = null;
 		void this.progressStore.save().catch((e) =>
 			console.error("[EPUB++] Failed to save progress on unload:", e),
 		);
@@ -98,6 +110,35 @@ export default class EpubPlusPlugin extends Plugin {
 			}
 		}
 		return null;
+	}
+
+	initKoSync(): void {
+		if (
+			this.settings.kosyncEnabled &&
+			this.settings.kosyncUsername &&
+			this.settings.kosyncPassword
+		) {
+			if (this.kosyncManager) {
+				this.kosyncManager.updateCredentials(this.settings);
+			} else {
+				this.kosyncManager = new KoSyncManager(
+					this.progressStore,
+					this.app.vault,
+					this.settings,
+				);
+			}
+		} else {
+			this.kosyncManager?.clearCache();
+			this.kosyncManager = null;
+		}
+	}
+
+	private generateDeviceId(): string {
+		const bytes = new Uint8Array(16);
+		crypto.getRandomValues(bytes);
+		return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
+			"",
+		);
 	}
 
 	private patchOpenLinkText(): void {

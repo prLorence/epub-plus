@@ -25,6 +25,7 @@
 	},
 	"dependencies": {
 		"epubjs": "^0.3.93",
-		"obsidian": "latest"
+		"obsidian": "latest",
+		"spark-md5": "^3.0.2"
 	}
 }

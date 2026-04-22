@@ -71,6 +71,8 @@ export class EpubView extends FileView {
 		startContext: string;
 	} | null = null;
 	private extendBannerEl: HTMLElement | null = null;
+	/** Cached binary data for KOSync document hashing. */
+	private fileData: ArrayBuffer | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -229,6 +231,7 @@ export class EpubView extends FileView {
 
 		console.debug("[EPUB++] Reading binary data...");
 		const data = await this.app.vault.readBinary(file);
+		this.fileData = data;
 		console.debug("[EPUB++] Binary data size:", data.byteLength);
 
 		this.renderer = new EpubRenderer(
@@ -294,8 +297,31 @@ export class EpubView extends FileView {
 		);
 
 		// Display at saved position or pending CFI
-		const startCfi = this.pendingCfi ?? await this.getSavedCfi(file);
+		let startCfi = this.pendingCfi ?? await this.getSavedCfi(file);
 		this.pendingCfi = null;
+
+		// KOSync: pull progress from server on open
+		if (this.plugin.kosyncManager && this.fileData) {
+			try {
+				const syncResult =
+					await this.plugin.kosyncManager.syncOnOpen(
+						file.path,
+						this.fileData,
+					);
+				if (syncResult.action === "pulled" && syncResult.progress) {
+					if (syncResult.progress.cfi) {
+						startCfi = syncResult.progress.cfi;
+					} else if (syncResult.progress.percent > 0) {
+						const cfi = this.renderer.cfiFromPercentage(
+							syncResult.progress.percent / 100,
+						);
+						if (cfi) startCfi = cfi;
+					}
+				}
+			} catch (e) {
+				console.warn("[EPUB++] KOSync pull failed:", e);
+			}
+		}
 
 		try {
 			await this.renderer.display(startCfi ?? undefined);
@@ -379,6 +405,20 @@ export class EpubView extends FileView {
 
 		this.exitExtendMode();
 		await this.plugin.progressStore.save();
+
+		// KOSync: push final progress on close
+		if (this.plugin.kosyncManager && this.fileData && file) {
+			const progress = this.plugin.progressStore.get(file.path);
+			if (progress) {
+				void this.plugin.kosyncManager.pushProgress(
+					file.path,
+					this.fileData,
+					progress,
+				);
+			}
+		}
+		this.fileData = null;
+
 		this.teardownBacklinks();
 		this.narrowObserver?.disconnect();
 		this.narrowObserver = null;
@@ -1021,6 +1061,19 @@ export class EpubView extends FileView {
 					location.cfi,
 				);
 				this.plugin.progressStore.scheduleSave();
+
+				// KOSync: push progress to server at the same interval
+				if (this.plugin.kosyncManager && this.fileData) {
+					void this.plugin.kosyncManager.pushProgress(
+						this.file.path,
+						this.fileData,
+						{
+							cfi: location.cfi,
+							percent: bookPercent,
+							updated: new Date().toISOString(),
+						},
+					);
+				}
 			}
 		}
 	}

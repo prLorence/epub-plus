@@ -1,4 +1,5 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import SparkMD5 from "spark-md5";
 import type EpubPlusPlugin from "./main";
 import type { PaletteColor } from "./types";
 import { DEFAULT_PALETTE } from "./constants";
@@ -53,6 +54,17 @@ export interface EpubPlusSettings {
 
 	// Companion note links (epub path → note path, persisted)
 	companionNoteLinks: Record<string, string>;
+
+	// KOReader Sync
+	kosyncEnabled: boolean;
+	kosyncServer: string;
+	kosyncUsername: string;
+	kosyncPassword: string; // MD5-hashed
+	kosyncDeviceName: string;
+	kosyncDeviceId: string;
+	kosyncChecksumMethod: "binary" | "filename";
+	kosyncSyncOnOpen: boolean;
+	kosyncSyncOnProgress: boolean;
 }
 
 const DEFAULT_TEMPLATE =
@@ -92,6 +104,16 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	enableVimBindings: false,
 
 	companionNoteLinks: {},
+
+	kosyncEnabled: false,
+	kosyncServer: "https://sync.koreader.rocks",
+	kosyncUsername: "",
+	kosyncPassword: "",
+	kosyncDeviceName: "Obsidian",
+	kosyncDeviceId: "",
+	kosyncChecksumMethod: "binary",
+	kosyncSyncOnOpen: true,
+	kosyncSyncOnProgress: true,
 };
 
 /**
@@ -130,6 +152,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 		this.renderHoverSection(containerEl);
 		this.renderKeyboardSection(containerEl);
 		this.renderProgressSection(containerEl);
+		this.renderKoSyncSection(containerEl);
 	}
 
 	private renderReaderSection(containerEl: HTMLElement): void {
@@ -598,5 +621,145 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 					input.addClass("epub-plus-narrow-input");
 				}
 			});
+	}
+
+	private renderKoSyncSection(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName("KOReader sync").setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable KOReader sync")
+			.setDesc(
+				"Sync reading progress with KOReader devices via the KOSync server.",
+			)
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.kosyncEnabled)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncEnabled = v;
+						await this.plugin.saveSettings();
+						this.plugin.initKoSync();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Server URL")
+			.setDesc("KOSync server address.")
+			.addText((t) =>
+				t
+					.setPlaceholder("https://sync.koreader.rocks")
+					.setValue(this.plugin.settings.kosyncServer)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncServer = v;
+						await this.plugin.saveSettings();
+						this.plugin.initKoSync();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Username")
+			.addText((t) =>
+				t
+					.setPlaceholder("username")
+					.setValue(this.plugin.settings.kosyncUsername)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncUsername = v;
+						await this.plugin.saveSettings();
+						this.plugin.initKoSync();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Password")
+			.setDesc(
+				"Your KOSync password. Stored as MD5 hash (same as KOReader).",
+			)
+			.addText((t) => {
+				t.inputEl.type = "password";
+				if (this.plugin.settings.kosyncPassword) {
+					t.setPlaceholder("••••••••");
+				}
+				t.onChange(async (v) => {
+					if (v) {
+						this.plugin.settings.kosyncPassword =
+							SparkMD5.hash(v);
+						await this.plugin.saveSettings();
+						this.plugin.initKoSync();
+					}
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Test connection")
+			.setDesc("Verify your credentials against the server.")
+			.addButton((b) =>
+				b.setButtonText("Test").onClick(async () => {
+					if (!this.plugin.kosyncManager) {
+						new Notice(
+							"Enable sync and enter credentials first",
+						);
+						return;
+					}
+					await this.plugin.kosyncManager.testConnection();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Device name")
+			.setDesc("How this device identifies itself to the sync server.")
+			.addText((t) =>
+				t
+					.setValue(this.plugin.settings.kosyncDeviceName)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncDeviceName = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Document matching method")
+			.setDesc(
+				"Binary: partial file hash (default, matches KOReader). Filename: hash of filename only (use if files are modified between devices).",
+			)
+			.addDropdown((d) =>
+				d
+					.addOptions({
+						binary: "Binary (file content)",
+						filename: "Filename",
+					})
+					.setValue(this.plugin.settings.kosyncChecksumMethod)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncChecksumMethod =
+							v as EpubPlusSettings["kosyncChecksumMethod"];
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Sync on open")
+			.setDesc(
+				"Pull latest progress from the server when opening a book.",
+			)
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.kosyncSyncOnOpen)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncSyncOnOpen = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Sync on progress")
+			.setDesc(
+				"Push progress to the server as you read (uses the same interval as disk sync).",
+			)
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.kosyncSyncOnProgress)
+					.onChange(async (v) => {
+						this.plugin.settings.kosyncSyncOnProgress = v;
+						await this.plugin.saveSettings();
+					}),
+			);
 	}
 }

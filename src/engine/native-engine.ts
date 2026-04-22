@@ -925,9 +925,11 @@ class NativeRendition implements IRendition {
 			.section-wrapper {
 				display: block;
 				line-height: 1.6;
-				${!isPaginated ? `
+				${isPaginated ? `
+					overflow: hidden;
+				` : `
 					margin-block-end: 100px;
-				` : ""}
+				`}
 			}
 
 			.section-wrapper.hidden {
@@ -988,6 +990,8 @@ class NativeRendition implements IRendition {
 			.html-plus-highlight {
 				border-radius: 2px;
 				cursor: pointer;
+				-webkit-box-decoration-break: clone;
+				box-decoration-break: clone;
 			}
 			.html-plus-highlight:hover {
 				filter: brightness(0.9);
