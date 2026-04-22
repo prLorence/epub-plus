@@ -201,6 +201,10 @@ export class EpubView extends FileView {
 		return this.fileData;
 	}
 
+	getBook(): unknown {
+		return this.renderer?.getEngine()?.getBook() ?? null;
+	}
+
 	navigateToPercent(pct: number): void {
 		if (!this.renderer) return;
 		const cfi = this.renderer.cfiFromPercentage(Math.max(0, Math.min(1, pct)));
@@ -314,10 +318,12 @@ export class EpubView extends FileView {
 		let kosyncPercent: number | null = null;
 		if (this.plugin.kosyncManager && this.fileData) {
 			try {
+				const book = this.renderer.getEngine()?.getBook();
 				const syncResult =
 					await this.plugin.kosyncManager.syncOnOpen(
 						file.path,
 						this.fileData,
+						book as import("epubjs/types/book").default | undefined,
 					);
 				if (syncResult.action === "pulled" && syncResult.progress) {
 					if (syncResult.progress.cfi) {

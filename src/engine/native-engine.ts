@@ -73,6 +73,10 @@ export class NativeEngine implements IBookEngine {
 		return hrefs;
 	}
 
+	getBook(): Book | null {
+		return this.book;
+	}
+
 	getArchive(): import("./types").EpubArchive | null {
 		if (!this.book?.archive) return null;
 		return {

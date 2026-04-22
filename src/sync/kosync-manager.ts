@@ -2,9 +2,11 @@ import { Notice, Vault } from "obsidian";
 import { KoSyncClient } from "./kosync-client";
 import type { KoSyncProgress } from "./kosync-client";
 import { partialMD5, filenameMD5 } from "./document-hash";
+import { xpathToCfi } from "./xpath-to-cfi";
 import type { ProgressStore } from "../progress/progress-store";
 import type { ReadingProgress } from "../types";
 import type { EpubPlusSettings } from "../settings";
+import type Book from "epubjs/types/book";
 
 export interface SyncResult {
 	action: "pulled" | "pushed" | "none" | "error";
@@ -47,6 +49,7 @@ export class KoSyncManager {
 	async syncOnOpen(
 		filePath: string,
 		fileData: ArrayBuffer,
+		book?: Book,
 	): Promise<SyncResult> {
 		if (!this.settings.kosyncEnabled || !this.settings.kosyncSyncOnOpen) {
 			return { action: "none" };
@@ -86,7 +89,7 @@ export class KoSyncManager {
 			// If another device has progress, pull it (regardless of
 			// local timestamp — the user explicitly wants cross-device sync)
 			if (otherDevice) {
-				const converted = this.serverToLocal(otherDevice);
+				const converted = await this.serverToLocal(otherDevice, book);
 				this.progressStore.set(filePath, converted);
 				this.progressStore.scheduleSave();
 				return { action: "pulled", progress: converted };
@@ -214,21 +217,37 @@ export class KoSyncManager {
 		}
 	}
 
-	private serverToLocal(server: KoSyncProgress): ReadingProgress {
+	private async serverToLocal(
+		server: KoSyncProgress,
+		book?: Book,
+	): Promise<ReadingProgress> {
 		const timestamp = server.timestamp
 			? new Date(server.timestamp * 1000).toISOString()
 			: new Date().toISOString();
 
-		// Only store the progress string as CFI if it's actually an EPUB CFI.
-		// KOReader sends XPointers (e.g. "/body/DocFragment[20]/body/p[22]/img.0")
-		// which are NOT valid CFIs and will crash EPUB.js if passed to display().
 		const progress = server.progress || "";
-		const cfi =
-			progress.startsWith("epubcfi(") ? progress : "";
+		let cfi = "";
+
+		if (progress.startsWith("epubcfi(")) {
+			// Already a valid CFI
+			cfi = progress;
+		} else if (progress && book) {
+			// Try to convert KOReader XPath to CFI
+			const converted = await xpathToCfi(progress, book);
+			if (converted) {
+				console.debug(
+					"[EPUB++] KoSync: converted XPath to CFI:",
+					progress,
+					"→",
+					converted,
+				);
+				cfi = converted;
+			}
+		}
 
 		return {
 			cfi,
-			percent: Math.round(server.percentage * 100), // server stores 0-1, local uses 0-100
+			percent: Math.round(server.percentage * 100),
 			updated: timestamp,
 		};
 	}

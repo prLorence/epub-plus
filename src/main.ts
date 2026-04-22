@@ -253,9 +253,13 @@ export default class EpubPlusPlugin extends Plugin {
 			return;
 		}
 
+		const book = view.getBook() as
+			| import("epubjs/types/book").default
+			| undefined;
 		const result = await this.kosyncManager.syncOnOpen(
 			file.path,
 			fileData,
+			book ?? undefined,
 		);
 
 		if (result.action === "pulled" && result.progress) {

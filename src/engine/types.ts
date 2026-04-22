@@ -17,6 +17,8 @@ export interface IBookEngine {
 	getArchive(): EpubArchive | null;
 	/** Get all spine item hrefs in reading order. */
 	getSpineHrefs(): string[];
+	/** Get the underlying epub.js Book object (for CFI generation, etc.). */
+	getBook(): unknown;
 	destroy(): void;
 }
 

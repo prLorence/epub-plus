@@ -81,6 +81,10 @@ export class EpubJsEngine implements IBookEngine {
 		return hrefs;
 	}
 
+	getBook(): Book | null {
+		return this.book;
+	}
+
 	getArchive(): EpubArchive | null {
 		if (!this.book?.archive) return null;
 		return {
