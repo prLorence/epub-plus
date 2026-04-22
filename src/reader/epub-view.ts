@@ -970,9 +970,27 @@ export class EpubView extends FileView {
 	private handleRelocated(location: ReaderLocation): void {
 		const locationsReady =
 			this.renderer?.areLocationsReady() ?? false;
-		const bookPercent = locationsReady
-			? this.renderer!.getPercentage()
-			: 0;
+
+		// Compute percentage from spine position — more reliable than
+		// epub.js locations which can be inaccurate for some books.
+		const spineHrefs = this.renderer?.getEngine()?.getSpineHrefs() ?? [];
+		const spineIdx = location.href
+			? spineHrefs.indexOf(location.href)
+			: -1;
+		let bookPercent: number;
+		if (spineIdx >= 0 && spineHrefs.length > 0) {
+			// Add intra-spine progress from displayed page info
+			const intraSpine = location.displayed
+				? location.displayed.page / Math.max(location.displayed.total, 1)
+				: 0;
+			bookPercent = Math.round(
+				((spineIdx + intraSpine) / spineHrefs.length) * 1000,
+			) / 10;
+		} else {
+			bookPercent = locationsReady
+				? this.renderer!.getPercentage()
+				: 0;
+		}
 
 		// Track navigation history for back navigation.
 		// Only push to history when an in-book link is clicked (not page
