@@ -40,6 +40,10 @@ export class ProgressStore {
 		return this.frontmatterStore.getNoteLinkEntries();
 	}
 
+	getKoreaderFilename(epubPath: string): string | undefined {
+		return this.frontmatterStore.getKoreaderFilename(epubPath);
+	}
+
 	async load(): Promise<void> {
 		// Always load the JSON state as in-memory cache
 		const adapter = this.vault.adapter;

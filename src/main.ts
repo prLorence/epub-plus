@@ -84,17 +84,6 @@ export default class EpubPlusPlugin extends Plugin {
 			},
 		});
 
-		this.addCommand({
-			id: "kosync-scan-calibre",
-			name: "Scan for KOReader progress (Calibre filename variants)",
-			checkCallback: (checking) => {
-				const view = this.getActiveEpubView();
-				if (!view || !this.kosyncManager) return false;
-				if (checking) return true;
-				void this.scanAndPullCalibre(view);
-				return true;
-			},
-		});
 
 		this.addSettingTab(new EpubPlusSettingTab(this.app, this));
 	}
@@ -249,37 +238,6 @@ export default class EpubPlusPlugin extends Plugin {
 		const leaf = this.app.workspace.activeLeaf;
 		if (leaf?.view instanceof EpubView) return leaf.view;
 		return null;
-	}
-
-	private async scanAndPullCalibre(view: EpubView): Promise<void> {
-		if (!this.kosyncManager || !view.file) return;
-
-		const sp = await this.kosyncManager.scanForCalibreProgress(
-			view.file.path,
-		);
-		if (!sp) return;
-
-		// Now do a full pull which will include the newly discovered hash
-		const fileData = view.getFileData();
-		if (!fileData) return;
-
-		const result = await this.kosyncManager.syncOnOpen(
-			view.file.path,
-			fileData,
-		);
-
-		if (result.action === "pulled" && result.progress) {
-			if (result.progress.cfi) {
-				view.setEphemeralState({
-					subpath: `#cfi=${result.progress.cfi}`,
-				});
-			} else if (result.progress.percent > 0) {
-				view.navigateToPercent(result.progress.percent / 100);
-			}
-			new Notice(
-				`Synced to ${result.progress.percent}% from KOReader`,
-			);
-		}
 	}
 
 	private async pullKosyncProgress(view: EpubView): Promise<void> {

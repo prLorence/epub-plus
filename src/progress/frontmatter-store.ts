@@ -92,6 +92,23 @@ const progress = fm["epub-progress"] as Record<string, string | number> | undefi
 		});
 	}
 
+	/**
+	 * Read the `koreader-filename` frontmatter property from the companion note.
+	 * This is the filename of the EPUB on the KOReader device (e.g. with Calibre suffix).
+	 */
+	getKoreaderFilename(epubPath: string): string | undefined {
+		const notePath = this.getCompanionNotePath(epubPath) + ".md";
+		const file = this.app.vault.getAbstractFileByPath(notePath);
+		if (!(file instanceof TFile)) return undefined;
+
+		const cache = this.app.metadataCache.getFileCache(file);
+		const fm = cache?.frontmatter;
+		if (!fm) return undefined;
+
+		const value = fm["koreader-filename"] as string | undefined;
+		return value || undefined;
+	}
+
 	getMostRecent(): {
 		path: string;
 		progress: ReadingProgress;

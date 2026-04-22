@@ -73,6 +73,8 @@ export class EpubView extends FileView {
 	private extendBannerEl: HTMLElement | null = null;
 	/** Cached binary data for KOSync document hashing. */
 	private fileData: ArrayBuffer | null = null;
+	/** Deferred KOSync percentage to navigate to once locations are ready. */
+	private pendingKosyncPercent: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -322,10 +324,9 @@ export class EpubView extends FileView {
 					if (syncResult.progress.cfi) {
 						startCfi = syncResult.progress.cfi;
 					} else if (syncResult.progress.percent > 0) {
-						const cfi = this.renderer.cfiFromPercentage(
-							syncResult.progress.percent / 100,
-						);
-						if (cfi) startCfi = cfi;
+						// Locations aren't generated yet, so defer navigation
+						this.pendingKosyncPercent =
+							syncResult.progress.percent / 100;
 					}
 				}
 			} catch (e) {
@@ -973,6 +974,18 @@ export class EpubView extends FileView {
 		const bookPercent = locationsReady
 			? this.renderer!.getPercentage()
 			: 0;
+
+		// Deferred KOSync navigation — wait until locations are ready
+		if (locationsReady && this.pendingKosyncPercent !== null) {
+			const pct = this.pendingKosyncPercent;
+			this.pendingKosyncPercent = null;
+			const cfi = this.renderer?.cfiFromPercentage(pct);
+			if (cfi) {
+				this.suppressHistoryPush = true;
+				void this.renderer?.display(cfi);
+				return; // will re-enter handleRelocated after navigation
+			}
+		}
 
 		// Track navigation history for back navigation.
 		// Only push to history when an in-book link is clicked (not page
@@ -1699,7 +1712,7 @@ export class EpubView extends FileView {
 	private async getSavedCfi(file: TFile): Promise<string | null> {
 		const progress = await this.plugin.progressStore.getAsync(file.path);
 		console.debug("[EPUB++] getSavedCfi:", file.path, "→", progress?.cfi ?? "none", progress?.percent ?? 0, "%");
-		return progress?.cfi ?? null;
+		return progress?.cfi || null;
 	}
 }
 

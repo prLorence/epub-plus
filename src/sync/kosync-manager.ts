@@ -157,7 +157,8 @@ export class KoSyncManager {
 	/**
 	 * Compute all relevant hashes for a document.
 	 * Returns the primary hash (based on settings) plus any additional
-	 * hashes to sync with (e.g. both binary and filename).
+	 * hashes to sync with (binary, filename, and KOReader device filename
+	 * from the companion note's `koreader-filename` frontmatter property).
 	 */
 	private computeHashes(
 		filePath: string,
@@ -179,9 +180,18 @@ export class KoSyncManager {
 				? fnHash
 				: binHash;
 
-		// Deduplicate (they'll differ in practice, but just in case)
-		const all = [primary, ...[binHash, fnHash].filter((h) => h !== primary)];
+		const hashSet = new Set([primary, binHash, fnHash]);
 
+		// If the companion note has a koreader-filename, hash that too
+		const koreaderFn = this.progressStore.getKoreaderFilename(filePath);
+		if (koreaderFn) {
+			const name = koreaderFn.includes(".")
+				? koreaderFn
+				: koreaderFn + ".epub";
+			hashSet.add(filenameMD5(name));
+		}
+
+		const all = [...hashSet];
 		this.hashCache.set(cacheKey, all.join(","));
 		return { primary, all };
 	}
@@ -226,47 +236,6 @@ export class KoSyncManager {
 			percent: Math.round(server.percentage * 100), // server stores 0-1, local uses 0-100
 			updated: timestamp,
 		};
-	}
-
-	/**
-	 * Scan the server for progress stored under Calibre-suffixed filenames.
-	 * Calibre adds " (N)" before the extension when sending wirelessly.
-	 * Tries (1) through (300) to find a match, then remembers the hash.
-	 */
-	async scanForCalibreProgress(
-		filePath: string,
-	): Promise<KoSyncProgress | null> {
-		const basename = filePath.split("/").pop() ?? filePath;
-		const match = basename.match(/^(.+)(\.epub)$/i);
-		if (!match) return null;
-
-		const stem = match[1]!;
-		const ext = match[2]!;
-
-		new Notice("Scanning for KOReader progress...");
-
-		for (let i = 1; i <= 300; i++) {
-			const variant = `${stem} (${i})${ext}`;
-			const hash = filenameMD5(variant);
-			const sp = await this.client.getProgress(hash);
-			if (sp && sp.document) {
-				// Found it — add to the hash cache so future pushes include it
-				const cacheKey = `__hashes__${filePath}`;
-				const existing = this.hashCache.get(cacheKey);
-				if (existing) {
-					this.hashCache.set(cacheKey, existing + "," + hash);
-				} else {
-					this.hashCache.set(cacheKey, hash);
-				}
-				new Notice(
-					`Found progress from "${sp.device}" at ${Math.round(sp.percentage * 100)}% (matched "${variant}")`,
-				);
-				return sp;
-			}
-		}
-
-		new Notice("No KOReader progress found for this book");
-		return null;
 	}
 
 	/**
