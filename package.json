@@ -1,6 +1,6 @@
 {
 	"name": "epub-plus",
-	"version": "3.4.0",
+	"version": "3.5.0",
 	"description": "EPUB reader for Obsidian with deep linking and CFI-based annotations.",
 	"main": "main.js",
 	"type": "module",
