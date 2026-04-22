@@ -208,6 +208,12 @@ export class EpubRenderer {
 		return this.rendition?.areLocationsReady() ?? false;
 	}
 
+	async waitForLocations(): Promise<void> {
+		if (!this.rendition) return;
+		if (this.rendition.areLocationsReady()) return;
+		await this.rendition.generateLocations(1024).catch(() => {});
+	}
+
 	cfiFromPercentage(percentage: number): string | null {
 		return this.rendition?.cfiFromPercentage(percentage) ?? null;
 	}

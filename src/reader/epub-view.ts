@@ -73,8 +73,6 @@ export class EpubView extends FileView {
 	private extendBannerEl: HTMLElement | null = null;
 	/** Cached binary data for KOSync document hashing. */
 	private fileData: ArrayBuffer | null = null;
-	/** Deferred KOSync percentage to navigate to once locations are ready. */
-	private pendingKosyncPercent: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: EpubPlusPlugin) {
 		super(leaf);
@@ -313,6 +311,7 @@ export class EpubView extends FileView {
 		this.pendingCfi = null;
 
 		// KOSync: pull progress from server on open
+		let kosyncPercent: number | null = null;
 		if (this.plugin.kosyncManager && this.fileData) {
 			try {
 				const syncResult =
@@ -324,9 +323,7 @@ export class EpubView extends FileView {
 					if (syncResult.progress.cfi) {
 						startCfi = syncResult.progress.cfi;
 					} else if (syncResult.progress.percent > 0) {
-						// Locations aren't generated yet, so defer navigation
-						this.pendingKosyncPercent =
-							syncResult.progress.percent / 100;
+						kosyncPercent = syncResult.progress.percent / 100;
 					}
 				}
 			} catch (e) {
@@ -341,16 +338,38 @@ export class EpubView extends FileView {
 			await this.renderer.display();
 		}
 
+		// If KOSync pulled a percentage, wait for locations then navigate
+		if (kosyncPercent !== null) {
+			console.debug(
+				"[EPUB++] KoSync: waiting for locations to navigate to",
+				Math.round(kosyncPercent * 100) + "%",
+			);
+			await this.renderer.waitForLocations();
+			const cfi = this.renderer.cfiFromPercentage(kosyncPercent);
+			if (cfi) {
+				console.debug("[EPUB++] KoSync: navigating to pulled position");
+				await this.renderer.display(cfi);
+			}
+		}
+
 		// Book is ready — hide loading screen
 		this.hideLoading();
 
 		// Fix blank page: EPUB.js needs the container to be fully laid out
 		// before it can render correctly. Wait for the layout to settle,
 		// then resize and re-display at the saved position.
+		const displayTarget = startCfi ?? undefined;
 		setTimeout(() => {
 			if (!this.renderer) return;
 			this.renderer.forceResize();
-			void this.renderer.display(startCfi ?? undefined);
+			if (kosyncPercent !== null) {
+				const cfi = this.renderer.cfiFromPercentage(kosyncPercent);
+				if (cfi) {
+					void this.renderer.display(cfi);
+					return;
+				}
+			}
+			void this.renderer.display(displayTarget);
 		}, 300);
 
 		// Vim keybindings
@@ -975,24 +994,6 @@ export class EpubView extends FileView {
 		const bookPercent = locationsReady
 			? this.renderer!.getPercentage()
 			: 0;
-
-		// Deferred KOSync navigation — wait until locations are ready
-		if (this.pendingKosyncPercent !== null && locationsReady) {
-			const pct = this.pendingKosyncPercent;
-			this.pendingKosyncPercent = null;
-			if (pct > 0) {
-				const cfi = this.renderer?.cfiFromPercentage(pct);
-				if (cfi) {
-					console.debug(
-						"[EPUB++] KoSync: navigating to pulled position:",
-						Math.round(pct * 100) + "%",
-					);
-					this.suppressHistoryPush = true;
-					void this.renderer?.display(cfi);
-					return; // will re-enter handleRelocated after navigation
-				}
-			}
-		}
 
 		// Track navigation history for back navigation.
 		// Only push to history when an in-book link is clicked (not page
