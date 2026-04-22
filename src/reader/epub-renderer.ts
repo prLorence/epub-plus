@@ -8,6 +8,7 @@ import type {
 	SelectionInfo,
 } from "../engine/types";
 import { createEngine } from "../engine/engine-factory";
+import { getBundledFontCss } from "../fonts/bundled-fonts";
 import type { EngineType } from "../engine/engine-factory";
 
 export interface EpubRendererCallbacks {
@@ -430,14 +431,36 @@ export class EpubRenderer {
 		const fontFamily = this.settings.fontFamily;
 		const opacity = this.settings.highlightOpacity ?? 0.3;
 
-		const contentFont = fontFamily || '"Georgia", "Times New Roman", serif';
+		// Resolve font: bundled → @font-face + family, otherwise plain CSS
+		let fontFaceCss = "";
+		let contentFont: string;
+
+		const bundled = getBundledFontCss(fontFamily);
+		if (bundled) {
+			fontFaceCss = bundled.fontFaceCss;
+			contentFont = bundled.fontFamily;
+		} else if (fontFamily === "system-serif") {
+			contentFont = '"Georgia", "Times New Roman", serif';
+		} else if (fontFamily === "system-sans") {
+			contentFont = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif';
+		} else if (fontFamily) {
+			contentFont = fontFamily;
+		} else {
+			// Book default — don't override
+			contentFont = "";
+		}
+
+		const fontRule = contentFont
+			? `font-family: ${contentFont} !important;`
+			: "";
 
 		return `
+			${fontFaceCss}
 			:root {
 				font-size: ${fontSize}px !important;
 			}
 			body {
-				font-family: ${contentFont} !important;
+				${fontRule}
 				line-height: ${lineHeight} !important;
 				text-align: justify;
 				text-rendering: optimizeLegibility;
@@ -450,7 +473,17 @@ export class EpubRenderer {
 				orphans: 2;
 			}
 			a { text-decoration: none; }
-			h1, h2, h3 { break-before: column; }
+			h1, h2, h3, h4, h5, h6 {
+				break-before: column;
+				break-after: avoid;
+				line-height: 1.3;
+				margin-block-start: 1.5em;
+				margin-block-end: 0.5em;
+			}
+			h1 { font-size: 1.6em; }
+			h2 { font-size: 1.35em; }
+			h3 { font-size: 1.15em; }
+			h4, h5, h6 { font-size: 1em; }
 			img, svg {
 				max-width: 100%;
 				height: auto;

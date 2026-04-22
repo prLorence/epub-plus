@@ -213,16 +213,74 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Font family")
-			.setDesc("Leave blank to use the book's default font.")
-			.addText((t) =>
-				t
-					.setPlaceholder("E.g. Georgia, serif")
-					.setValue(this.plugin.settings.fontFamily)
-					.onChange(async (v) => {
+			.setDesc(
+				"Choose a reading font. Literata and Lora are bundled. Select Custom to enter a system font name or vault font path.",
+			)
+			.addDropdown((d) => {
+				d.addOptions({
+					"": "Book default",
+					literata: "Literata",
+					lora: "Lora",
+					"fast-sans": "Fast Sans",
+					"fast-serif": "Fast Serif",
+					"system-serif": "System serif (Georgia)",
+					"system-sans": "System sans-serif",
+					custom: "Custom...",
+				});
+				const current = this.plugin.settings.fontFamily;
+				const isPreset = [
+					"",
+					"literata",
+					"lora",
+					"fast-sans",
+					"fast-serif",
+					"system-serif",
+					"system-sans",
+				].includes(current);
+				d.setValue(isPreset ? current : "custom");
+				d.onChange(async (v) => {
+					if (v === "custom") {
+						this.plugin.settings.fontFamily = "";
+						await this.plugin.saveSettings();
+						this.display();
+					} else {
 						this.plugin.settings.fontFamily = v;
 						await this.plugin.saveSettings();
-					}),
+					}
+				});
+			});
+
+		// Show custom input when "Custom" is selected
+		if (
+			!["", "literata", "lora", "system-serif", "system-sans"].includes(
+				this.plugin.settings.fontFamily,
+			) ||
+			this.plugin.settings.fontFamily === ""
+		) {
+			// Only show if actually custom (not empty = book default from dropdown)
+		}
+		const currentFont = this.plugin.settings.fontFamily;
+		const isCustom =
+			currentFont !== "" &&
+			!["literata", "lora", "fast-sans", "fast-serif", "system-serif", "system-sans"].includes(
+				currentFont,
 			);
+		if (isCustom) {
+			new Setting(containerEl)
+				.setName("Custom font")
+				.setDesc(
+					"Enter a CSS font name (e.g. Bookerly) or a vault path to a .woff2 file.",
+				)
+				.addText((t) =>
+					t
+						.setPlaceholder("E.g. Bookerly, serif")
+						.setValue(this.plugin.settings.fontFamily)
+						.onChange(async (v) => {
+							this.plugin.settings.fontFamily = v;
+							await this.plugin.saveSettings();
+						}),
+				);
+		}
 
 		new Setting(containerEl)
 			.setName("Line height")

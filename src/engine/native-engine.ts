@@ -958,6 +958,24 @@ class NativeRendition implements IRendition {
 				text-decoration: none;
 			}
 
+			/* ── Headings ── */
+			.section-wrapper h1,
+			.section-wrapper h2,
+			.section-wrapper h3,
+			.section-wrapper h4,
+			.section-wrapper h5,
+			.section-wrapper h6 {
+				line-height: 1.3;
+				margin-block-start: 1.5em;
+				margin-block-end: 0.5em;
+			}
+			.section-wrapper h1 { font-size: 1.6em; }
+			.section-wrapper h2 { font-size: 1.35em; }
+			.section-wrapper h3 { font-size: 1.15em; }
+			.section-wrapper h4,
+			.section-wrapper h5,
+			.section-wrapper h6 { font-size: 1em; }
+
 			.section-wrapper :link {
 				color: var(--link-color, #0000ee) !important;
 			}
@@ -983,12 +1001,22 @@ class NativeRendition implements IRendition {
 				height: auto;
 			}
 
-			/* ── Page breaks (paginated) ── */
+			/* ── Chapter separation ── */
 			${isPaginated ? `
 				.section-wrapper section + section {
 					margin-block-start: 100vh;
 				}
-			` : ""}
+			` : `
+				.section-wrapper + .section-wrapper {
+					border-top: 1px solid var(--text-color, #666);
+					padding-block-start: 2em;
+					margin-block-start: 3em;
+				}
+				.section-wrapper + .section-wrapper::before {
+					display: block;
+					opacity: 0.15;
+				}
+			`}
 
 			/* ── Highlights ── */
 			.html-plus-highlight {
