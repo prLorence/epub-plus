@@ -36,9 +36,9 @@ function parseKoReaderXPath(xpath: string): KoReaderXPath | null {
 
 	let rest = afterFrag.slice(bodyMatch[0].length);
 
-	// Check for text().N at the end
+	// Check for text().N or text()[N].M at the end
 	let textOffset: number | null = null;
-	const textMatch = /\/text\(\)\.(\d+)$/.exec(rest);
+	const textMatch = /\/text\(\)(?:\[\d+\])?\.(\d+)$/.exec(rest);
 	if (textMatch) {
 		textOffset = parseInt(textMatch[1]!, 10);
 		rest = rest.slice(0, -textMatch[0].length);
@@ -148,11 +148,14 @@ export async function xpathToCfi(
 		const section: Section = book.spine.get(parsed.spineIndex);
 		if (!section) return null;
 
-		// Load the section's DOM — epub.js types say it returns Document
-		// but at runtime it returns a Promise<Document>
-		await (section as unknown as { load: (req: unknown) => Promise<unknown> }).load(
-			(book as unknown as { load: unknown }).load,
-		);
+		// Use the archive's request function to load the section.
+		// section.load() needs a function that fetches the section URL
+		// and returns a parsed XML document.
+		const archive = book.archive;
+		if (!archive) return null;
+
+		const requestFn = archive.request.bind(archive);
+		await (section.load(requestFn) as unknown as Promise<unknown>);
 
 		const doc = section.document;
 		if (!doc?.body) {
@@ -196,6 +199,150 @@ export async function xpathToCfi(
 		return cfi || null;
 	} catch (e) {
 		console.warn("[EPUB++] XPath→CFI conversion failed:", e);
+		return null;
+	}
+}
+
+/**
+ * Build a KOReader-style XPath from a DOM node up to the section body.
+ *
+ * Produces paths like: section/div[3]/p[11]
+ * Each segment includes a 1-based index counting same-tag siblings.
+ */
+function buildDomPath(node: Node, body: Element): string {
+	const segments: string[] = [];
+	let current: Node | null = node;
+
+	while (current && current !== body && current.parentNode) {
+		if (current.nodeType === Node.ELEMENT_NODE) {
+			const el = current as Element;
+			const tag = el.tagName.toLowerCase();
+
+			// Count same-tag siblings before this element (1-based index)
+			let idx = 1;
+			let sibling = el.previousElementSibling;
+			while (sibling) {
+				if (sibling.tagName.toLowerCase() === tag) idx++;
+				sibling = sibling.previousElementSibling;
+			}
+
+			// Count total same-tag siblings to decide if index is needed
+			let total = idx;
+			let next = el.nextElementSibling;
+			while (next) {
+				if (next.tagName.toLowerCase() === tag) total++;
+				next = next.nextElementSibling;
+			}
+
+			segments.unshift(total > 1 ? `${tag}[${idx}]` : tag);
+		}
+		current = current.parentNode;
+	}
+
+	return segments.join("/");
+}
+
+/**
+ * Count character offset from the start of an element to a specific
+ * text node + offset within that element.
+ */
+function countCharOffset(element: Element, targetNode: Text, targetOffset: number): number {
+	const walker = element.ownerDocument.createTreeWalker(
+		element,
+		NodeFilter.SHOW_TEXT,
+	);
+
+	let charCount = 0;
+	let current: Node | null;
+	while ((current = walker.nextNode())) {
+		if (current === targetNode) {
+			return charCount + targetOffset;
+		}
+		charCount += (current as Text).textContent?.length ?? 0;
+	}
+	return charCount + targetOffset;
+}
+
+/**
+ * Convert an EPUB CFI to a KOReader XPath/XPointer string.
+ *
+ * Resolves the CFI to a DOM position using epub.js, then walks the DOM
+ * to build the XPath that KOReader expects.
+ *
+ * @returns A KOReader XPath string, or null if conversion fails.
+ */
+export async function cfiToXpath(
+	cfi: string,
+	book: Book,
+): Promise<string | null> {
+	if (!cfi || !cfi.startsWith("epubcfi(")) return null;
+
+	try {
+		// Extract spine index from CFI: epubcfi(/6/N!...) → spine = N/2 - 1
+		const spineMatch = /^epubcfi\(\/6\/(\d+)/.exec(cfi);
+		if (!spineMatch) return null;
+		const spineIndex = Math.floor(parseInt(spineMatch[1]!, 10) / 2) - 1;
+
+		// DocFragment is 1-based
+		const docFragment = spineIndex + 1;
+
+		// Resolve CFI to a DOM range
+		const range = await book.getRange(cfi);
+		if (!range) {
+			// Can't resolve — return a basic XPath with just the spine
+			return `/body/DocFragment[${docFragment}]/body`;
+		}
+
+		const startNode = range.startContainer;
+		const startOffset = range.startOffset;
+
+		// Find the section body
+		const doc = startNode.ownerDocument;
+		const body = doc?.body;
+		if (!body) return `/body/DocFragment[${docFragment}]/body`;
+
+		// Find the nearest block-level ancestor — KOReader XPaths
+		// point to block elements (p, div, h1-h6, li, blockquote, etc.),
+		// never inline elements like <a>, <span>, <em>.
+		const INLINE_TAGS = new Set([
+			"a", "abbr", "b", "bdo", "br", "cite", "code", "dfn",
+			"em", "i", "img", "kbd", "mark", "q", "rp", "rt",
+			"ruby", "s", "samp", "small", "span", "strong", "sub",
+			"sup", "time", "u", "var", "wbr",
+		]);
+
+		let blockEl: Element | null =
+			startNode.nodeType === Node.TEXT_NODE
+				? startNode.parentElement
+				: (startNode as Element);
+		while (
+			blockEl &&
+			blockEl !== body &&
+			INLINE_TAGS.has(blockEl.tagName.toLowerCase())
+		) {
+			blockEl = blockEl.parentElement;
+		}
+		if (!blockEl || blockEl === body) {
+			return `/body/DocFragment[${docFragment}]/body`;
+		}
+
+		// Build DOM path from body to the block element
+		const domPath = buildDomPath(blockEl, body);
+		let xpath = `/body/DocFragment[${docFragment}]/body/${domPath}`;
+
+		// Compute character offset relative to the block element
+		if (startNode.nodeType === Node.TEXT_NODE) {
+			const charOffset = countCharOffset(
+				blockEl,
+				startNode as Text,
+				startOffset,
+			);
+			xpath += `/text().${charOffset}`;
+		}
+
+		return xpath;
+	} catch (e) {
+		console.warn("[EPUB++] CFI→XPath conversion failed:", e);
 		return null;
 	}
 }

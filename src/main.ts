@@ -18,6 +18,8 @@ export default class EpubPlusPlugin extends Plugin {
 	progressStore: ProgressStore = null!;
 	textCache: EpubTextCache = null!;
 	kosyncManager: KoSyncManager | null = null;
+	/** Resolves when deferred init (store loading) completes. */
+	storesReady: Promise<void> = Promise.resolve();
 	private originalOpenLinkText:
 		| ((
 				linktext: string,
@@ -39,15 +41,7 @@ export default class EpubPlusPlugin extends Plugin {
 			this.settings.progressStorage,
 			this.settings.companionNoteLinks,
 		);
-		await this.progressStore.load();
-
-		// Prune stale entries after layout is ready (vault fully indexed)
-		this.app.workspace.onLayoutReady(() => {
-			void this.progressStore.pruneDeleted(this.app.vault.adapter);
-		});
-
 		this.textCache = new EpubTextCache(this.app.vault);
-		await this.textCache.load();
 
 		this.registerView(
 			EPUB_VIEW_TYPE,
@@ -58,13 +52,9 @@ export default class EpubPlusPlugin extends Plugin {
 		this.patchOpenLinkText();
 		registerEpubEmbedProcessor(this);
 
-		// Generate a stable device ID on first run
-		if (!this.settings.kosyncDeviceId) {
-			this.settings.kosyncDeviceId = this.generateDeviceId();
-			await this.saveData(this.settings);
-		}
-
-		this.initKoSync();
+		// Start loading stores immediately but don't block onload().
+		// EpubView and commands await storesReady before using them.
+		this.storesReady = this.deferredInit();
 
 		this.addCommand({
 			id: "continue-reading",
@@ -123,6 +113,25 @@ export default class EpubPlusPlugin extends Plugin {
 			}
 		}
 		return null;
+	}
+
+	private async deferredInit(): Promise<void> {
+		await Promise.all([
+			this.progressStore.load(),
+			this.textCache.load(),
+		]);
+
+		if (!this.settings.kosyncDeviceId) {
+			this.settings.kosyncDeviceId = this.generateDeviceId();
+			await this.saveData(this.settings);
+		}
+
+		this.initKoSync();
+
+		// Prune stale entries after vault is fully indexed
+		this.app.workspace.onLayoutReady(() => {
+			void this.progressStore.pruneDeleted(this.app.vault.adapter);
+		});
 	}
 
 	initKoSync(): void {
@@ -213,6 +222,7 @@ export default class EpubPlusPlugin extends Plugin {
 	}
 
 	private async continueReading(): Promise<void> {
+		await this.storesReady;
 		const recent = this.progressStore.getMostRecent();
 		if (!recent) return;
 
@@ -253,6 +263,7 @@ export default class EpubPlusPlugin extends Plugin {
 			return;
 		}
 
+		console.info("[EPUB++] KoSync pull command: starting...");
 		const book = view.getBook() as
 			| import("epubjs/types/book").default
 			| undefined;
@@ -262,13 +273,19 @@ export default class EpubPlusPlugin extends Plugin {
 			book ?? undefined,
 		);
 
+		console.info("[EPUB++] KoSync pull command: result →", result.action, result.progress);
+
 		if (result.action === "pulled" && result.progress) {
 			if (result.progress.cfi) {
+				console.info("[EPUB++] KoSync pull: navigating to CFI:", result.progress.cfi);
 				view.setEphemeralState({
 					subpath: `#cfi=${result.progress.cfi}`,
 				});
 			} else if (result.progress.percent > 0) {
+				console.info("[EPUB++] KoSync pull: navigating to %:", result.progress.percent);
 				view.navigateToPercent(result.progress.percent / 100);
+			} else {
+				console.info("[EPUB++] KoSync pull: no CFI and 0% — cannot navigate");
 			}
 			new Notice(
 				`Synced to ${result.progress.percent}% from ${result.progress.updated}`,

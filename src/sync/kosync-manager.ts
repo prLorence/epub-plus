@@ -2,7 +2,7 @@ import { Notice, Vault } from "obsidian";
 import { KoSyncClient } from "./kosync-client";
 import type { KoSyncProgress } from "./kosync-client";
 import { partialMD5, filenameMD5 } from "./document-hash";
-import { xpathToCfi } from "./xpath-to-cfi";
+import { xpathToCfi, cfiToXpath } from "./xpath-to-cfi";
 import type { ProgressStore } from "../progress/progress-store";
 import type { ReadingProgress } from "../types";
 import type { EpubPlusSettings } from "../settings";
@@ -35,6 +35,7 @@ export class KoSyncManager {
 	 */
 	updateCredentials(settings: EpubPlusSettings): void {
 		this.settings = settings;
+		this.hashCache.clear(); // Settings may change the hash method
 		this.client = new KoSyncClient({
 			server: settings.kosyncServer,
 			username: settings.kosyncUsername,
@@ -56,48 +57,44 @@ export class KoSyncManager {
 		}
 
 		try {
-			const { all } = this.computeHashes(filePath, fileData);
+			const { primary, all } = this.computeHashes(filePath, fileData);
 			const localProgress = this.progressStore.get(filePath);
 
-			// Pull from ALL hashes, preferring entries from other devices.
-			// The KOSync API stores one entry per hash — when we push, we
-			// overwrite the previous entry. So we look for any hash where
-			// a DIFFERENT device last pushed (that's the one to pull from).
-			let otherDevice: KoSyncProgress | null = null;
-			let ownDevice: KoSyncProgress | null = null;
-			for (const hash of all) {
-				const sp = await this.client.getProgress(hash);
-				if (!sp) continue;
+			// Pull from ALL hashes in parallel, pick the most recent entry.
+			// The KOSync API stores one entry per hash — after we push,
+			// only our own entry remains. So we use whatever the server
+			// has (from any device) as the source of truth.
+			const results = await Promise.all(
+				all.map((hash) => this.client.getProgress(hash)),
+			);
 
-				if (sp.device_id !== this.settings.kosyncDeviceId) {
-					if (
-						!otherDevice ||
-						(sp.timestamp ?? 0) > (otherDevice.timestamp ?? 0)
-					) {
-						otherDevice = sp;
-					}
-				} else {
-					if (
-						!ownDevice ||
-						(sp.timestamp ?? 0) > (ownDevice.timestamp ?? 0)
-					) {
-						ownDevice = sp;
-					}
+			let best: KoSyncProgress | null = null;
+			for (const sp of results) {
+				if (!sp || sp.percentage === 0) continue;
+				if (
+					!best ||
+					(sp.timestamp ?? 0) > (best.timestamp ?? 0)
+				) {
+					best = sp;
 				}
 			}
 
-			// If another device has progress, pull it (regardless of
-			// local timestamp — the user explicitly wants cross-device sync)
-			if (otherDevice) {
-				const converted = await this.serverToLocal(otherDevice, book);
-				this.progressStore.set(filePath, converted);
-				this.progressStore.scheduleSave();
+			if (best) {
+				const converted = await this.serverToLocal(best, book);
+				console.info(
+					"[EPUB++] KoSync: pulled progress →",
+					converted.percent + "%",
+					"from",
+					best.device,
+					"cfi:",
+					converted.cfi ? "yes" : "no (percent fallback)",
+				);
 				return { action: "pulled", progress: converted };
 			}
 
-			// No other device — push local if we have it
+			// Server has nothing — push local if we have it
 			if (localProgress) {
-				await this.pushToAllHashes(all, localProgress);
+				await this.pushToHash(primary, localProgress);
 				return { action: "pushed" };
 			}
 
@@ -116,6 +113,7 @@ export class KoSyncManager {
 		filePath: string,
 		fileData: ArrayBuffer,
 		progress: ReadingProgress,
+		book?: Book,
 	): Promise<void> {
 		if (
 			!this.settings.kosyncEnabled ||
@@ -125,8 +123,28 @@ export class KoSyncManager {
 		}
 
 		try {
-			const { all } = this.computeHashes(filePath, fileData);
-			await this.pushToAllHashes(all, progress);
+			const { primary } = this.computeHashes(filePath, fileData);
+
+			// Convert CFI to KOReader XPath so KOReader can parse it
+			let progressStr = progress.cfi ?? "";
+			if (progressStr.startsWith("epubcfi(") && book) {
+				const xpath = await cfiToXpath(progressStr, book);
+				if (xpath) {
+					console.info(
+						"[EPUB++] KoSync: converted CFI to XPath:",
+						xpath,
+					);
+					progressStr = xpath;
+				}
+			}
+
+			await this.client.putProgress({
+				document: primary,
+				progress: progressStr,
+				percentage: progress.percent / 100,
+				device: this.settings.kosyncDeviceName,
+				device_id: this.settings.kosyncDeviceId,
+			});
 		} catch (e) {
 			console.warn("[EPUB++] KoSync: push progress failed:", e);
 		}
@@ -194,27 +212,17 @@ export class KoSyncManager {
 		return { primary, all };
 	}
 
-	private async pushToAllHashes(
-		hashes: string[],
+	private async pushToHash(
+		hash: string,
 		progress: ReadingProgress,
 	): Promise<void> {
-		for (const hash of hashes) {
-			const result = await this.client.putProgress({
-				document: hash,
-				progress: progress.cfi ?? "",
-				percentage: progress.percent / 100,
-				device: this.settings.kosyncDeviceName,
-				device_id: this.settings.kosyncDeviceId,
-			});
-			if (result) {
-				console.debug(
-					"[EPUB++] KoSync: pushed to hash",
-					hash,
-					"timestamp:",
-					result.timestamp,
-				);
-			}
-		}
+		await this.client.putProgress({
+			document: hash,
+			progress: progress.cfi ?? "",
+			percentage: progress.percent / 100,
+			device: this.settings.kosyncDeviceName,
+			device_id: this.settings.kosyncDeviceId,
+		});
 	}
 
 	private async serverToLocal(
@@ -235,13 +243,22 @@ export class KoSyncManager {
 			// Try to convert KOReader XPath to CFI
 			const converted = await xpathToCfi(progress, book);
 			if (converted) {
+				// cfiFromRange can return range CFIs with commas —
+				// extract just the start point for navigation
+				cfi = converted.includes(",")
+					? converted.replace(/,.*\)$/, ")")
+					: converted;
 				console.debug(
 					"[EPUB++] KoSync: converted XPath to CFI:",
 					progress,
 					"→",
-					converted,
+					cfi,
 				);
-				cfi = converted;
+			} else {
+				console.debug(
+					"[EPUB++] KoSync: XPath conversion returned null for:",
+					progress,
+				);
 			}
 		}
 

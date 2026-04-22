@@ -65,6 +65,7 @@ export interface EpubPlusSettings {
 	kosyncChecksumMethod: "binary" | "filename";
 	kosyncSyncOnOpen: boolean;
 	kosyncSyncOnProgress: boolean;
+	kosyncSyncPages: number;
 }
 
 const DEFAULT_TEMPLATE =
@@ -114,6 +115,7 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	kosyncChecksumMethod: "binary",
 	kosyncSyncOnOpen: true,
 	kosyncSyncOnProgress: true,
+	kosyncSyncPages: 5,
 };
 
 /**
@@ -626,10 +628,19 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 	private renderKoSyncSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("KOReader sync").setHeading();
 
+		if (this.plugin.settings.kosyncEnabled) {
+			const notice = containerEl.createEl("p", {
+				text: "KOReader sync is the active source of reading progress. Local progress storage is used as a fallback only.",
+				cls: "setting-item-description",
+			});
+			notice.style.color = "var(--text-accent)";
+			notice.style.marginBottom = "12px";
+		}
+
 		new Setting(containerEl)
 			.setName("Enable KOReader sync")
 			.setDesc(
-				"Sync reading progress with KOReader devices via the KOSync server.",
+				"Sync reading progress with KOReader devices via the KOSync server. When enabled, the server is the primary source of truth for reading position.",
 			)
 			.addToggle((t) =>
 				t
@@ -638,6 +649,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						this.plugin.settings.kosyncEnabled = v;
 						await this.plugin.saveSettings();
 						this.plugin.initKoSync();
+						this.display(); // Re-render to show/hide notice
 					}),
 			);
 
@@ -751,7 +763,7 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Sync on progress")
 			.setDesc(
-				"Push progress to the server as you read (uses the same interval as disk sync).",
+				"Push progress to the server as you read.",
 			)
 			.addToggle((t) =>
 				t
@@ -761,5 +773,32 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(containerEl)
+			.setName("Push every n pages")
+			.setDesc(
+				"Number of page turns before pushing progress to the sync server.",
+			)
+			.addText((t) =>
+				t
+					.setValue(
+						String(this.plugin.settings.kosyncSyncPages),
+					)
+					.onChange(async (v) => {
+						const n = parseInt(v, 10);
+						if (!isNaN(n) && n >= 1) {
+							this.plugin.settings.kosyncSyncPages = n;
+							await this.plugin.saveSettings();
+						}
+					}),
+			)
+			.then((s) => {
+				const input = s.controlEl.querySelector("input");
+				if (input) {
+					input.type = "number";
+					input.min = "1";
+					input.addClass("epub-plus-narrow-input");
+				}
+			});
 	}
 }

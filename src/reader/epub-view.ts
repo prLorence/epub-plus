@@ -45,6 +45,7 @@ export class EpubView extends FileView {
 	private loadingEl: HTMLElement | null = null;
 	private vimBindings: VimBindings | null = null;
 	private pageTurnsSinceSave = 0;
+	private pageTurnsSinceSync = 0;
 	private narrowObserver: ResizeObserver | null = null;
 	private progressFillEl: HTMLElement | null = null;
 	private chapterPageEl: HTMLElement | null = null;
@@ -214,6 +215,7 @@ export class EpubView extends FileView {
 	async onLoadFile(file: TFile): Promise<void> {
 		console.debug("[EPUB++] onLoadFile:", file.path);
 		try {
+		await this.plugin.storesReady;
 		await this.onLoadFileInner(file);
 		} catch (e) {
 			console.error("[EPUB++] onLoadFile FAILED:", e);
@@ -310,73 +312,36 @@ export class EpubView extends FileView {
 			},
 		);
 
-		// Display at saved position or pending CFI
-		let startCfi = this.pendingCfi ?? await this.getSavedCfi(file);
+		// Determine start position — KOSync is sole source of truth when enabled
+		let startCfi: string | null = this.pendingCfi;
 		this.pendingCfi = null;
 
-		// KOSync: pull progress from server on open
-		let kosyncPercent: number | null = null;
-		if (this.plugin.kosyncManager && this.fileData) {
-			try {
-				const book = this.renderer.getEngine()?.getBook();
-				const syncResult =
-					await this.plugin.kosyncManager.syncOnOpen(
-						file.path,
-						this.fileData,
-						book as import("epubjs/types/book").default | undefined,
-					);
-				if (syncResult.action === "pulled" && syncResult.progress) {
-					if (syncResult.progress.cfi) {
-						startCfi = syncResult.progress.cfi;
-					} else if (syncResult.progress.percent > 0) {
-						kosyncPercent = syncResult.progress.percent / 100;
-					}
-				}
-			} catch (e) {
-				console.warn("[EPUB++] KOSync pull failed:", e);
-			}
+		if (!startCfi && this.plugin.kosyncManager && this.fileData) {
+			// KOSync enabled: fetch position from server
+			startCfi = await this.fetchKosyncPosition(file);
+		}
+
+		if (!startCfi) {
+			// Fall back to locally saved progress (or beginning)
+			startCfi = await this.getSavedCfi(file);
 		}
 
 		try {
 			await this.renderer.display(startCfi ?? undefined);
 		} catch {
-			// If display fails (e.g., bad saved CFI), display from beginning
 			await this.renderer.display();
-		}
-
-		// If KOSync pulled a percentage, wait for locations then navigate
-		if (kosyncPercent !== null) {
-			console.debug(
-				"[EPUB++] KoSync: waiting for locations to navigate to",
-				Math.round(kosyncPercent * 100) + "%",
-			);
-			await this.renderer.waitForLocations();
-			const cfi = this.renderer.cfiFromPercentage(kosyncPercent);
-			if (cfi) {
-				console.debug("[EPUB++] KoSync: navigating to pulled position");
-				await this.renderer.display(cfi);
-			}
 		}
 
 		// Book is ready — hide loading screen
 		this.hideLoading();
 
-		// Fix blank page: EPUB.js needs the container to be fully laid out
-		// before it can render correctly. Wait for the layout to settle,
-		// then resize and re-display at the saved position.
-		const displayTarget = startCfi ?? undefined;
-		setTimeout(() => {
+		// Post-layout resize — wait one frame for container to settle
+		const displayTarget = startCfi;
+		requestAnimationFrame(() => {
 			if (!this.renderer) return;
 			this.renderer.forceResize();
-			if (kosyncPercent !== null) {
-				const cfi = this.renderer.cfiFromPercentage(kosyncPercent);
-				if (cfi) {
-					void this.renderer.display(cfi);
-					return;
-				}
-			}
-			void this.renderer.display(displayTarget);
-		}, 300);
+			void this.renderer.display(displayTarget ?? undefined);
+		});
 
 		// Vim keybindings
 		if (this.plugin.settings.enableVimBindings && this.renderer && !Platform.isMobile) {
@@ -428,8 +393,13 @@ export class EpubView extends FileView {
 			);
 		}
 
-		// Phase 2: Backlink highlighting
-		this.setupBacklinkHighlighting(file);
+		// Phase 2: Backlink highlighting — defer to avoid blocking render
+		const backlinkFile = file;
+		if (typeof requestIdleCallback !== "undefined") {
+			requestIdleCallback(() => this.setupBacklinkHighlighting(backlinkFile), { timeout: 2000 });
+		} else {
+			setTimeout(() => this.setupBacklinkHighlighting(backlinkFile), 100);
+		}
 	}
 
 	async onUnloadFile(file: TFile): Promise<void> {
@@ -440,19 +410,22 @@ export class EpubView extends FileView {
 		this.activeDismissHandlers = [];
 
 		this.exitExtendMode();
+		await this.plugin.progressStore.save();
 
+		// KOSync: push final progress to server
 		if (this.plugin.kosyncManager && this.fileData && file) {
-			// KOSync active: push final progress to server, skip local save
 			const progress = this.plugin.progressStore.get(file.path);
 			if (progress) {
+				const book = this.renderer?.getEngine()?.getBook() as
+					| import("epubjs/types/book").default
+					| undefined;
 				void this.plugin.kosyncManager.pushProgress(
 					file.path,
 					this.fileData,
 					progress,
+					book,
 				);
 			}
-		} else {
-			await this.plugin.progressStore.save();
 		}
 		this.fileData = null;
 
@@ -1074,58 +1047,64 @@ export class EpubView extends FileView {
 		// Save reading progress — skip until locations are generated
 		// to avoid overwriting accurate saved data with 0%
 		const autoSave = this.plugin.settings.autoSaveProgress ?? true;
-		const useKosync = !!this.plugin.kosyncManager;
 		if (
 			this.file &&
 			autoSave &&
 			locationsReady &&
 			location.cfi
 		) {
-			// Always update in-memory progress (needed for continue-reading
-			// and the pull command). When KOSync is active, skip persisting
-			// to disk/frontmatter to avoid timestamp races.
-			this.plugin.progressStore.set(
-				this.file.path,
-				{
-					cfi: location.cfi,
-					percent: bookPercent,
-					updated: new Date().toISOString(),
-				},
-				useKosync,
-			);
+			this.plugin.progressStore.set(this.file.path, {
+				cfi: location.cfi,
+				percent: bookPercent,
+				updated: new Date().toISOString(),
+			});
 
-			// Only sync every N page turns
+			// Local disk sync every N page turns
 			this.pageTurnsSinceSave++;
-			const syncInterval =
+			const diskInterval =
 				this.plugin.settings.progressSyncPages ?? 5;
-			if (this.pageTurnsSinceSave >= syncInterval) {
+			if (this.pageTurnsSinceSave >= diskInterval) {
 				this.pageTurnsSinceSave = 0;
+				this.plugin.progressStore.scheduleSave();
+			}
+		}
 
-				if (useKosync && this.fileData) {
-					// KOSync: push progress to server
-					console.debug(
-						"[EPUB++] KoSync: pushing progress:",
-						bookPercent + "%",
-						location.cfi,
-					);
-					void this.plugin.kosyncManager!.pushProgress(
-						this.file.path,
-						this.fileData,
-						{
-							cfi: location.cfi,
-							percent: bookPercent,
-							updated: new Date().toISOString(),
-						},
-					);
-				} else {
-					// Local-only: write to disk
-					console.debug(
-						"[EPUB++] Syncing progress to disk:",
-						bookPercent + "%",
-						location.cfi,
-					);
-					this.plugin.progressStore.scheduleSave();
-				}
+		// KOSync push — works even before locations are ready (uses CFI directly)
+		if (this.file && this.plugin.kosyncManager && this.fileData && location.cfi) {
+			this.pageTurnsSinceSync++;
+			const syncInterval =
+				this.plugin.settings.kosyncSyncPages ?? 5;
+			if (this.pageTurnsSinceSync >= syncInterval) {
+				this.pageTurnsSinceSync = 0;
+
+				// Compute spine-based percentage (matches KOReader's calculation)
+				const spineHrefs = this.renderer?.getEngine()?.getSpineHrefs() ?? [];
+				const totalSpines = spineHrefs.length;
+				const currentIdx = location.href
+					? spineHrefs.indexOf(location.href)
+					: -1;
+				const spinePercent = totalSpines > 0 && currentIdx >= 0
+					? Math.round((currentIdx / totalSpines) * 1000) / 10
+					: bookPercent;
+
+				console.info(
+					"[EPUB++] KoSync: pushing progress:",
+					spinePercent + "%",
+					location.cfi,
+				);
+				const book = this.renderer?.getEngine()?.getBook() as
+					| import("epubjs/types/book").default
+					| undefined;
+				void this.plugin.kosyncManager.pushProgress(
+					this.file.path,
+					this.fileData,
+					{
+						cfi: location.cfi,
+						percent: spinePercent,
+						updated: new Date().toISOString(),
+					},
+					book,
+				);
 			}
 		}
 	}
@@ -1736,6 +1715,45 @@ export class EpubView extends FileView {
 			new Notice(`Linked to ${notePath}.md`);
 		});
 		modal.open();
+	}
+
+	/**
+	 * Fetch the reading position from KOSync. Returns a CFI or null.
+	 * When KOSync is enabled, this is the sole source of truth for position.
+	 */
+	private async fetchKosyncPosition(file: TFile): Promise<string | null> {
+		try {
+			const book = this.renderer?.getEngine()?.getBook();
+			const syncResult =
+				await this.plugin.kosyncManager!.syncOnOpen(
+					file.path,
+					this.fileData!,
+					book as import("epubjs/types/book").default | undefined,
+				);
+			if (syncResult.action === "pulled" && syncResult.progress) {
+				if (syncResult.progress.cfi) {
+					console.debug("[EPUB++] KoSync: using server CFI");
+					return syncResult.progress.cfi;
+				}
+				if (syncResult.progress.percent > 0) {
+					// Need locations to convert percentage to CFI
+					await this.renderer?.waitForLocations();
+					const cfi = this.renderer?.cfiFromPercentage(
+						syncResult.progress.percent / 100,
+					);
+					if (cfi) {
+						console.debug(
+							"[EPUB++] KoSync: using server %",
+							syncResult.progress.percent,
+						);
+						return cfi;
+					}
+				}
+			}
+		} catch (e) {
+			console.warn("[EPUB++] KOSync fetch failed:", e);
+		}
+		return null;
 	}
 
 	private async getSavedCfi(file: TFile): Promise<string | null> {
