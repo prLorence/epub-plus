@@ -31,6 +31,9 @@ echo "Updated package.json to $VERSION"
 npm run version
 echo "Ran npm run version"
 
+git tag "$VERSION"
+git push origin "$VERSION"
+
 # 3. Commit if -c was passed
 if $COMMIT; then
 	git add package.json manifest.json versions.json
