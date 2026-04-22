@@ -39,6 +39,7 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
+	loader: { ".woff2": "base64", ".otf": "base64", ".ttf": "base64" },
 });
 
 if (prod) {
