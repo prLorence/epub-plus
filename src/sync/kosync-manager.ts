@@ -53,41 +53,53 @@ export class KoSyncManager {
 		}
 
 		try {
-			const hash = this.computeHash(filePath, fileData);
-			const serverProgress = await this.client.getProgress(hash);
+			const { all } = this.computeHashes(filePath, fileData);
 			const localProgress = this.progressStore.get(filePath);
 
-			if (!serverProgress && !localProgress) {
+			// Pull from ALL hashes, pick the most recent
+			let bestServer: KoSyncProgress | null = null;
+			for (const hash of all) {
+				const sp = await this.client.getProgress(hash);
+				if (
+					sp &&
+					(!bestServer ||
+						(sp.timestamp ?? 0) > (bestServer.timestamp ?? 0))
+				) {
+					bestServer = sp;
+				}
+			}
+
+			if (!bestServer && !localProgress) {
 				return { action: "none" };
 			}
 
-			if (!serverProgress && localProgress) {
-				await this.pushToServer(hash, localProgress);
+			if (!bestServer && localProgress) {
+				await this.pushToAllHashes(all, localProgress);
 				return { action: "pushed" };
 			}
 
-			if (serverProgress && !localProgress) {
-				const converted = this.serverToLocal(serverProgress);
+			if (bestServer && !localProgress) {
+				const converted = this.serverToLocal(bestServer);
 				this.progressStore.set(filePath, converted);
 				this.progressStore.scheduleSave();
 				return { action: "pulled", progress: converted };
 			}
 
 			// Both exist — compare timestamps
-			const serverTime = serverProgress!.timestamp ?? 0;
+			const serverTime = bestServer!.timestamp ?? 0;
 			const localTime = Math.floor(
 				new Date(localProgress!.updated).getTime() / 1000,
 			);
 
 			if (serverTime > localTime) {
-				const converted = this.serverToLocal(serverProgress!);
+				const converted = this.serverToLocal(bestServer!);
 				this.progressStore.set(filePath, converted);
 				this.progressStore.scheduleSave();
 				return { action: "pulled", progress: converted };
 			}
 
 			if (localTime > serverTime) {
-				await this.pushToServer(hash, localProgress!);
+				await this.pushToAllHashes(all, localProgress!);
 				return { action: "pushed" };
 			}
 
@@ -115,8 +127,8 @@ export class KoSyncManager {
 		}
 
 		try {
-			const hash = this.computeHash(filePath, fileData);
-			await this.pushToServer(hash, progress);
+			const { all } = this.computeHashes(filePath, fileData);
+			await this.pushToAllHashes(all, progress);
 		} catch (e) {
 			console.warn("[EPUB++] KoSync: push progress failed:", e);
 		}
@@ -142,39 +154,58 @@ export class KoSyncManager {
 		}
 	}
 
-	private computeHash(filePath: string, fileData: ArrayBuffer): string {
-		const cached = this.hashCache.get(filePath);
-		if (cached) return cached;
-
-		let hash: string;
-		if (this.settings.kosyncChecksumMethod === "filename") {
-			const basename = filePath.split("/").pop() ?? filePath;
-			hash = filenameMD5(basename);
-		} else {
-			hash = partialMD5(fileData);
+	/**
+	 * Compute all relevant hashes for a document.
+	 * Returns the primary hash (based on settings) plus any additional
+	 * hashes to sync with (e.g. both binary and filename).
+	 */
+	private computeHashes(
+		filePath: string,
+		fileData: ArrayBuffer,
+	): { primary: string; all: string[] } {
+		const cacheKey = `__hashes__${filePath}`;
+		const cached = this.hashCache.get(cacheKey);
+		if (cached) {
+			const all = cached.split(",");
+			return { primary: all[0]!, all };
 		}
 
-		this.hashCache.set(filePath, hash);
-		return hash;
+		const basename = filePath.split("/").pop() ?? filePath;
+		const binHash = partialMD5(fileData);
+		const fnHash = filenameMD5(basename);
+
+		const primary =
+			this.settings.kosyncChecksumMethod === "filename"
+				? fnHash
+				: binHash;
+
+		// Deduplicate (they'll differ in practice, but just in case)
+		const all = [primary, ...[binHash, fnHash].filter((h) => h !== primary)];
+
+		this.hashCache.set(cacheKey, all.join(","));
+		return { primary, all };
 	}
 
-	private async pushToServer(
-		hash: string,
+	private async pushToAllHashes(
+		hashes: string[],
 		progress: ReadingProgress,
 	): Promise<void> {
-		const result = await this.client.putProgress({
-			document: hash,
-			progress: progress.cfi ?? "",
-			percentage: progress.percent / 100, // local stores 0-100, server expects 0-1
-			device: this.settings.kosyncDeviceName,
-			device_id: this.settings.kosyncDeviceId,
-		});
-
-		if (result) {
-			console.debug(
-				"[EPUB++] KoSync: pushed progress, server timestamp:",
-				result.timestamp,
-			);
+		for (const hash of hashes) {
+			const result = await this.client.putProgress({
+				document: hash,
+				progress: progress.cfi ?? "",
+				percentage: progress.percent / 100,
+				device: this.settings.kosyncDeviceName,
+				device_id: this.settings.kosyncDeviceId,
+			});
+			if (result) {
+				console.debug(
+					"[EPUB++] KoSync: pushed to hash",
+					hash,
+					"timestamp:",
+					result.timestamp,
+				);
+			}
 		}
 	}
 
@@ -195,6 +226,47 @@ export class KoSyncManager {
 			percent: Math.round(server.percentage * 100), // server stores 0-1, local uses 0-100
 			updated: timestamp,
 		};
+	}
+
+	/**
+	 * Scan the server for progress stored under Calibre-suffixed filenames.
+	 * Calibre adds " (N)" before the extension when sending wirelessly.
+	 * Tries (1) through (300) to find a match, then remembers the hash.
+	 */
+	async scanForCalibreProgress(
+		filePath: string,
+	): Promise<KoSyncProgress | null> {
+		const basename = filePath.split("/").pop() ?? filePath;
+		const match = basename.match(/^(.+)(\.epub)$/i);
+		if (!match) return null;
+
+		const stem = match[1]!;
+		const ext = match[2]!;
+
+		new Notice("Scanning for KOReader progress...");
+
+		for (let i = 1; i <= 300; i++) {
+			const variant = `${stem} (${i})${ext}`;
+			const hash = filenameMD5(variant);
+			const sp = await this.client.getProgress(hash);
+			if (sp && sp.document) {
+				// Found it — add to the hash cache so future pushes include it
+				const cacheKey = `__hashes__${filePath}`;
+				const existing = this.hashCache.get(cacheKey);
+				if (existing) {
+					this.hashCache.set(cacheKey, existing + "," + hash);
+				} else {
+					this.hashCache.set(cacheKey, hash);
+				}
+				new Notice(
+					`Found progress from "${sp.device}" at ${Math.round(sp.percentage * 100)}% (matched "${variant}")`,
+				);
+				return sp;
+			}
+		}
+
+		new Notice("No KOReader progress found for this book");
+		return null;
 	}
 
 	/**
