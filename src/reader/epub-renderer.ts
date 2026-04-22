@@ -429,6 +429,8 @@ export class EpubRenderer {
 		const fontSize = this.settings.fontSize ?? 18;
 		const lineHeight = this.settings.lineHeight ?? 1.6;
 		const fontFamily = this.settings.fontFamily;
+		const fontWeight = this.settings.fontWeight ?? 400;
+		const headingWeight = this.settings.headingWeight ?? 700;
 		const opacity = this.settings.highlightOpacity ?? 0.3;
 
 		// Resolve font: bundled → @font-face + family, otherwise plain CSS
@@ -461,6 +463,7 @@ export class EpubRenderer {
 			}
 			body {
 				${fontRule}
+				font-weight: ${fontWeight} !important;
 				line-height: ${lineHeight} !important;
 				text-align: justify;
 				text-rendering: optimizeLegibility;
@@ -476,6 +479,7 @@ export class EpubRenderer {
 			h1, h2, h3, h4, h5, h6 {
 				break-before: column;
 				break-after: avoid;
+				font-weight: ${headingWeight} !important;
 				line-height: 1.3;
 				margin-block-start: 1.5em;
 				margin-block-end: 0.5em;
@@ -500,7 +504,7 @@ export class EpubRenderer {
 	}
 
 	private computeStyleHash(settings: EpubPlusSettings): string {
-		return `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.highlightOpacity}|${settings.theme}|${settings.maxContentWidth}|${settings.marginSize}`;
+		return `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.fontWeight}|${settings.headingWeight}|${settings.highlightOpacity}|${settings.theme}|${settings.maxContentWidth}|${settings.marginSize}`;
 	}
 
 	private getContainerSize(): { width: number; height: number } {

@@ -15,6 +15,8 @@ export interface EpubPlusSettings {
 	readingMode: "paginated" | "scrolled";
 	fontSize: number;
 	fontFamily: string;
+	fontWeight: number;
+	headingWeight: number;
 	lineHeight: number;
 	marginSize: number;
 	maxContentWidth: number; // 0 = no limit
@@ -76,6 +78,8 @@ export const DEFAULT_SETTINGS: EpubPlusSettings = {
 	readingMode: "paginated",
 	fontSize: 18,
 	fontFamily: "",
+	fontWeight: 400,
+	headingWeight: 700,
 	lineHeight: 1.6,
 	marginSize: 40,
 	maxContentWidth: 0,
@@ -281,6 +285,34 @@ export class EpubPlusSettingTab extends PluginSettingTab {
 						}),
 				);
 		}
+
+		new Setting(containerEl)
+			.setName("Body font weight")
+			.setDesc("Weight of body text (300 = light, 400 = regular, 500 = medium, 700 = bold).")
+			.addSlider((s) =>
+				s
+					.setLimits(100, 900, 100)
+					.setValue(this.plugin.settings.fontWeight)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						this.plugin.settings.fontWeight = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Heading font weight")
+			.setDesc("Weight of headings (400 = regular, 600 = semi-bold, 700 = bold, 900 = black).")
+			.addSlider((s) =>
+				s
+					.setLimits(100, 900, 100)
+					.setValue(this.plugin.settings.headingWeight)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						this.plugin.settings.headingWeight = v;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName("Line height")
